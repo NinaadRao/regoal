@@ -1,12 +1,13 @@
 /*
- * Diet plan screens: a suggested week of meals built from your targets and preferences, the preferences form, and the
- * "What should I eat next?" card on Fuel. The plan itself comes from js/diet.js (rules, works offline, no key needed).
- * The optional AI button only asks your own model for text tips. It never changes the plan or logs anything.
- * Nothing is written to your log until you tap "Log this meal" or "Log this".
+ * Diet plan screens: a suggested week of meals built from your targets and preferences, the preferences form, the
+ * "What should I eat next?" card and the "Surprise me" dessert card on Fuel. The plan and the built-in "Surprise me"
+ * ideas come from js/diet.js (rules, works offline, no key needed). The optional AI buttons ask your own model for
+ * text tips, or (for "Surprise me") to invent a dessert idea; either way you always see it and confirm before
+ * anything is logged, exactly like the AI food estimate on Fuel.
  */
 (function (root) {
   'use strict';
-  const E = root.Engine, U = root.U, UI = root.UI, Store = root.Store, Diet = root.Diet;
+  const E = root.Engine, U = root.U, UI = root.UI, Store = root.Store, Diet = root.Diet, FoodAI = root.FoodAI;
   const { h } = U;
   const Screens = root.Screens = root.Screens || {};
   const ORDER = [1, 2, 3, 4, 5, 6, 0]; // Monday first
@@ -16,6 +17,7 @@
   const dayIdxOf = (date) => (E.weekdayOf(date) + 6) % 7;
   const clone = (p) => ({ style: p.style == null ? null : p.style, cuisine: p.cuisine, meals: p.meals, avoid: p.avoid.slice(), dislikes: p.dislikes.slice(), quick: !!p.quick, seed: p.seed, swaps: Object.assign({}, p.swaps) });
   const macroText = (m) => 'P ' + U.num(m.protein, 0) + ' · C ' + U.num(m.carbs, 0) + ' · F ' + U.num(m.fat, 0);
+  const numOrNull = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
 
   function savePrefs(p) {
     const chk = E.cleanDietPrefs(p);
@@ -215,15 +217,15 @@
   };
 
   // ---------- Fuel: surprise me (a treat) ----------
-  let surpriseOpen = false, surpriseSalt = 0;
-  Screens.surpriseCard = function () {
-    const kids = [h('div', { class: 'ct' }, 'Surprise me'), h('div', { class: 'muted small' }, 'A healthy, high-protein dessert idea, sized to what you have left today.')];
-    if (!surpriseOpen) {
-      kids.push(UI.btn('Surprise me', { onClick: () => { surpriseOpen = true; root.App.render(); } }));
-      return UI.card(...kids);
-    }
+  // surprise.mode: 'rules' (built-in ideas, offline) | 'ai-form' (ask for a craving) | 'ai-confirm' (check the model's idea before logging).
+  const surprise = { open: false, salt: 0, mode: 'rules', craving: '', busy: null, err: '', ai: null };
+  function remainingToday(st, date) {
+    const plan = st.plan, tot = Diet.dayTotals(st, date);
+    return { kcal: plan.kcal - tot.kcal, protein: plan.protein - tot.protein, carbs: plan.carbs - tot.carbs, fat: plan.fat - tot.fat };
+  }
+  function drawSurpriseRules(kids) {
     const st = Store.getState(), prefs = Diet.effective(st), date = U.today();
-    const r = Diet.surpriseMe(st, prefs, date, { salt: surpriseSalt });
+    const r = Diet.surpriseMe(st, prefs, date, { salt: surprise.salt });
     if (r.status === 'none') {
       kids.push(h('div', { class: 'muted' }, r.remaining.kcal <= 0 ? 'You are already at (or past) today\'s calories, so nothing fits without going further over.' : 'Not much room left today for a treat.'));
     } else {
@@ -233,8 +235,86 @@
         h('div', { class: 'muted small' }, s.items.map((i) => i.label + ' ' + i.name).join(' · ')),
         h('div', { class: 'muted small' }, U.withCommas(s.kcal) + ' kcal · ' + macroText(s)),
         UI.btn('Log this', { kind: 'quiet', onClick: () => { logItems(s.items, s.meal, date).then(() => { U.toast('Logged.'); root.App.render(); }); } })));
-      kids.push(UI.btn('Surprise me again', { kind: 'quiet', onClick: () => { surpriseSalt++; root.App.render(); } }));
+      kids.push(UI.btn('Surprise me again', { kind: 'quiet', onClick: () => { surprise.salt++; root.App.render(); } }));
     }
+    if (root.App.aiReady()) kids.push(UI.btn('Ask AI to invent one instead', { kind: 'quiet', onClick: () => { surprise.mode = 'ai-form'; surprise.err = ''; root.App.render(); } }));
+    else kids.push(h('div', { class: 'muted small' }, 'Add your own AI key in Coach settings and it can invent a dessert idea too, not just pick from the built-in list.'));
+  }
+  function drawSurpriseAiForm(kids) {
+    const cfg = root.App.llmConfig();
+    let host = '';
+    try { host = new URL(root.LLM.endpointOf(cfg)).host; } catch (e) { host = 'your provider'; }
+    const cf = UI.field({ label: 'Craving anything in particular? (optional)', value: surprise.craving, maxlength: 120, placeholder: 'chocolate, something fruity, no nuts...', onInput: (v) => { surprise.craving = v; } });
+    const errBox = surprise.err ? h('div', { class: 'warnbox', role: 'alert' }, surprise.err) : null;
+    const go = h('button', { type: 'button', class: 'btn primary block' }, surprise.busy ? 'Stop' : 'Ask AI');
+    if (surprise.busy) go.insertBefore(h('span', { class: 'spin' }), go.firstChild);
+    go.addEventListener('click', async () => {
+      if (surprise.busy) { surprise.busy.abort(); return; }
+      const st = Store.getState(), prefs = Diet.effective(st), date = U.today();
+      const ctl = new AbortController();
+      surprise.busy = ctl; surprise.err = ''; root.App.render();
+      try {
+        const r = await FoodAI.surprise(cfg, { remaining: remainingToday(st, date), prefs: { style: prefs.style, cuisine: prefs.cuisine, avoid: prefs.avoid, dislikes: prefs.dislikes }, craving: surprise.craving, signal: ctl.signal });
+        if (surprise.busy !== ctl) return; // stopped or superseded
+        surprise.busy = null;
+        surprise.ai = { r };
+        surprise.mode = 'ai-confirm';
+      } catch (e) {
+        if (surprise.busy !== ctl) return;
+        surprise.busy = null;
+        surprise.err = e && e.name === 'AbortError' ? 'Stopped.' : String(e && e.message ? e.message : e).slice(0, 300);
+      }
+      root.App.render();
+    });
+    kids.push(cf, h('div', { class: 'muted small' }, 'Sends your remaining calories and macros, your diet preferences, and this text (if any) to ' + host + ' with your key. Nothing is saved until you check the numbers.'),
+      errBox, go, UI.btn('Use a built-in idea instead', { kind: 'quiet', onClick: () => { surprise.mode = 'rules'; surprise.err = ''; root.App.render(); } }));
+  }
+  function drawSurpriseAiConfirm(kids) {
+    const v = surprise.ai.r.value;
+    const name = UI.field({ label: 'Name', value: v.name, maxlength: 80 });
+    const kc = UI.field({ label: 'Calories', unit: 'kcal', type: 'number', value: v.kcal, flex: 1 });
+    const p = UI.field({ label: 'Protein', unit: 'g', type: 'number', value: v.protein, flex: 1 });
+    const c = UI.field({ label: 'Carbs', unit: 'g', type: 'number', value: v.carbs, flex: 1 });
+    const fa = UI.field({ label: 'Fat', unit: 'g', type: 'number', value: v.fat, flex: 1 });
+    const live = h('div', { class: 'muted small' });
+    let ack = false;
+    const warn = h('div', { class: 'warnbox hidden', role: 'alert' });
+    const okBtn = h('button', { type: 'button', class: 'btn primary block' }, 'Looks right, log it');
+    const cur = () => ({ name: name.input.value, kcal: numOrNull(kc.input.value), protein: numOrNull(p.input.value), carbs: numOrNull(c.input.value), fat: numOrNull(fa.input.value) });
+    const refresh = () => { const x = cur(); live.textContent = 'Macros add up to about ' + Math.round(E.macroKcal(x.protein, x.carbs, x.fat)) + ' kcal.'; ack = false; warn.classList.add('hidden'); okBtn.textContent = 'Looks right, log it'; };
+    for (const f of [kc, p, c, fa, name]) f.input.addEventListener('input', refresh);
+    refresh();
+    okBtn.addEventListener('click', async () => {
+      const x = cur();
+      const n = E.normalizeFood(x);
+      if (!n.ok) return U.toast(n.errors[0], 'warn');
+      if (n.warnings.length && !ack) { ack = true; warn.textContent = n.warnings[0]; warn.classList.remove('hidden'); okBtn.textContent = 'Log anyway'; return; }
+      const edited = ['kcal', 'protein', 'carbs', 'fat'].some((k) => n.value[k] !== v[k]) || n.value.name !== v.name;
+      await Store.append('food_logged', { date: U.today(), meal: 'Snack', name: n.value.name, kcal: n.value.kcal, protein: n.value.protein, carbs: n.value.carbs, fat: n.value.fat, source: 'ai', ai: { items: v.items, assumptions: v.assumptions, confidence: v.confidence, edited, input: surprise.craving || '' }, portion: { unit: 'x', amount: 1, label: 'as logged', base: { kcal: n.value.kcal, protein: n.value.protein, carbs: n.value.carbs, fat: n.value.fat } } });
+      surprise.ai = null; surprise.mode = 'rules'; surprise.craving = '';
+      U.toast('Logged. Estimates can be edited any time from Fuel.');
+      root.App.render();
+    });
+    const items = v.items.length ? h('div', null, h('div', { class: 'lab' }, 'How it was worked out'), ...v.items.map((it) => h('div', { class: 'itemrow' }, h('span', null, it.name), h('b', null, it.kcal + ' kcal'), h('small', null, (it.qty ? it.qty + ' · ' : '') + macroText(it))))) : null;
+    kids.push(h('div', { class: 'est' },
+      h('div', { class: 'est-top' }, h('div', { class: 'ct' }, 'Check these numbers'), U.chip(v.confidence + ' confidence', v.confidence === 'high' ? 'good' : v.confidence === 'low' ? 'coral' : 'cool')),
+      h('div', { class: 'muted small' }, 'An AI-invented dessert idea, sized to what you have left today. Fix anything that looks off, then confirm.'),
+      name, UI.row(kc), UI.row(p, c, fa), live,
+      items,
+      v.assumptions.length ? h('ul', { class: 'assume' }, ...v.assumptions.map((a) => h('li', null, a))) : null,
+      surprise.ai.r.warnings.length ? h('div', { class: 'warnbox' }, surprise.ai.r.warnings[0]) : null,
+      warn, okBtn,
+      h('div', { class: 'row' }, UI.btn('Ask again', { kind: 'quiet', onClick: () => { surprise.ai = null; surprise.mode = 'ai-form'; root.App.render(); } }), UI.btn('Use a built-in idea instead', { kind: 'quiet', onClick: () => { surprise.ai = null; surprise.mode = 'rules'; root.App.render(); } }))));
+  }
+  Screens.surpriseCard = function () {
+    const kids = [h('div', { class: 'ct' }, 'Surprise me'), h('div', { class: 'muted small' }, 'A healthy, high-protein dessert idea, sized to what you have left today.')];
+    if (!surprise.open) {
+      kids.push(UI.btn('Surprise me', { onClick: () => { surprise.open = true; surprise.mode = 'rules'; root.App.render(); } }));
+      return UI.card(...kids);
+    }
+    if (surprise.mode === 'ai-form') drawSurpriseAiForm(kids);
+    else if (surprise.mode === 'ai-confirm' && surprise.ai) drawSurpriseAiConfirm(kids);
+    else drawSurpriseRules(kids);
     return UI.card(...kids);
   };
 })(self);

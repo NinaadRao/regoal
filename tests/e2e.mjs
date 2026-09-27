@@ -1927,6 +1927,33 @@ async function main() {
     await dpage.unroute('https://api.anthropic.com/**');
   });
 
+  await step('Fuel: "Surprise me" can ask AI to invent a dessert idea, shown for confirmation before anything is logged', async () => {
+    await route(dpage, '#/fuel');
+    const card = () => dpage.locator('section.card', { hasText: 'Surprise me' });
+    await card().waitFor();
+    if (await card().getByRole('button', { name: 'Surprise me', exact: true }).count()) await card().getByRole('button', { name: 'Surprise me', exact: true }).click();
+    await card().getByRole('button', { name: 'Ask AI to invent one instead' }).click();
+    await card().getByLabel('Craving anything in particular? (optional)').fill('chocolate');
+    const reply = { name: 'Chocolate protein mousse', items: [{ name: 'Greek yogurt', qty: '200 g', kcal: 120, protein: 20, carbs: 8, fat: 1 }, { name: 'Cocoa powder', qty: '1 tbsp', kcal: 20, protein: 2, carbs: 3, fat: 1 }], kcal: 140, protein: 22, carbs: 11, fat: 2, assumptions: ['Sweetened with a little honey to taste'], confidence: 'medium' };
+    const seen = await fakeAI(dpage, async () => ({ body: textReply(JSON.stringify(reply)) }));
+    const before = await dpage.evaluate(() => Store.getState().foods.length);
+    await card().getByRole('button', { name: 'Ask AI', exact: true }).click();
+    await card().getByText('Check these numbers').waitFor();
+    eq(seen.length, 1, 'one provider call');
+    eq(await dpage.evaluate(() => Store.getState().foods.length), before, 'nothing logged before confirmation');
+    const sent = JSON.stringify(seen[0].messages);
+    ok(/chocolate/.test(sent), 'the craving text is sent');
+    ok(/vegan/i.test(sent) && /western/i.test(sent), 'diet preferences are sent');
+    ok(/kcal/.test(sent), 'the remaining calories are sent');
+    ok(!/waist|weightKg|sk-ant|birth/i.test(sent), 'no profile data in the request');
+    await card().getByLabel('Calories').fill('160');
+    await card().getByRole('button', { name: 'Looks right, log it' }).click();
+    await dpage.waitForFunction((n) => Store.getState().foods.length > n, before);
+    const f = (await events(dpage)).filter((e) => e.type === 'food_logged').pop().data;
+    eq([f.source, f.meal, f.kcal, f.ai.edited], ['ai', 'Snack', 160, true]);
+    await dpage.unroute('https://api.anthropic.com/**');
+  });
+
   await step('the key saved on this device is sealed with a non-exportable key, survives a reload, and is never in a backup', async () => {
     await dpage.evaluate(async () => { await App.saveKey('sk-ant-remember-000000', true); });
     const rec = await dpage.evaluate(async () => { const r = await Store.getMeta('keydev_anthropic'); return { extractable: r.key.extractable, type: r.key.type, alg: r.key.algorithm.name, plain: JSON.stringify([r.data, r.iv]).includes('remember') }; });
