@@ -32,6 +32,8 @@ The **Goals** tab is where everything you are working towards lives. The switche
 
 **Counting your workouts.** A run, ride or swim counts towards its goals once you give it a distance: the Log a workout sheet has an optional **Distance** box, in your units (miles or km, and metres or yards for swimming). The sheet shows your pace as you type. Workouts without a distance still count as activity and towards streaks.
 
+**Distance unit.** By default it follows Measurements in Settings, Units (inches means miles, centimetres means km), the same as it always has. To pick km or miles on its own, without changing your height and measurement unit, set **Distance** in that same Units card; **Auto** goes back to following Measurements. Swimming always shows metres or yards for shorter distances under that choice, switching to km or miles itself past about 3 km.
+
 **Goals change.** **Edit goal** changes the name, target, length and start date (past readings stay). **Close goal** moves it to *Past goals*; **Reopen** brings it back. **Delete** removes the goal and the readings you typed for it, and keeps your workouts.
 
 **Going again.** When a cycle ends you get a short review: what you reached, how many weeks were on target, and a suggested next step (the next race on the ladder from 5K to marathon, more weeks if you fell short). **Start the next cycle** opens the goal sheet with those numbers filled in, and you can change any of them. The new goal remembers the one it follows.
@@ -50,9 +52,11 @@ Right after your macros in setup there is a **Diet plan** card. Pick how you eat
 
 **Open diet plan** (from Profile, Plan settings or Fuel) shows a day at a time with gram portions for every food: countable foods are whole pieces (3 idlis, 2 eggs, 1 scoop). The totals sit close to your calories and macros. **Swap** replaces one meal with another that fits, **Shuffle the week** starts a different rotation, and **Log this meal** adds each food to today's Fuel log as its own entry, which you can edit or delete like any other. Nothing is logged unless you tap.
 
-How it works: Regoal has about 55 everyday foods and about 60 meal ideas. Your choices filter the ideas, then each meal's portions are nudged, one step at a time, until the meal lands near its share of your day. If protein is short, a protein food that suits your diet (whey, Greek yogurt, egg whites, plant protein, and so on) is added. The same preferences always give the same week. This is a suggestion from tables, not medical advice; if you have an allergy or a health condition, check with a professional.
+How it works: Regoal has about 55 everyday foods and close to 70 meal ideas. Your choices filter the ideas, then each meal's portions are nudged, one step at a time, until the meal lands near its share of your day. If protein is short, a protein food that suits your diet (whey, Greek yogurt, egg whites, plant protein, and so on) is added. The same preferences always give the same week. This is a suggestion from tables, not medical advice; if you have an allergy or a health condition, check with a professional.
 
 **What should I eat next?** sits on Fuel, under Add food, for today. It works out what is left of your calories and macros after everything you logged, picks the next meal you have not logged (or the one you choose), and offers up to three meals with portions fitted to what is left. If you ate a big breakfast, lunch gets smaller portions. If protein is behind, it suggests a quick top-up. **Log this** adds it to today.
+
+**Surprise me** sits further down Fuel, for today. Tap it for a healthy, high-protein dessert idea (chocolate Greek yogurt, a protein pudding, energy bites, dark chocolate and almonds, and so on) sized to what is left of today's calories, and it still follows your diet style, cuisine and what you leave out or dislike. If there is barely any room left in the day, it says so instead of forcing one in. **Surprise me again** picks a different idea from the same shortlist; **Log this** adds it to today as a Snack.
 
 The optional AI buttons ("Ask for tips on this day", "Ask the coach about this") send only the meals and your eating preferences as text to your provider, and only when you tap. They return text tips. They never change the plan and never log anything.
 

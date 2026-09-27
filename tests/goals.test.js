@@ -149,6 +149,11 @@ test('distance and pace read and print the way each sport talks about them', () 
   assert.equal(G.fmtDist(3.8, 'km', 'swimming'), '3.8 km');
   assert.equal(G.distUnitFor({ lenUnit: 'in' }), 'mi');
   assert.equal(G.distUnitFor({ lenUnit: 'cm' }), 'km');
+  // an explicit distance-unit choice overrides the length-unit fallback either way
+  assert.equal(G.distUnitFor({ lenUnit: 'in', distUnit: 'km' }), 'km');
+  assert.equal(G.distUnitFor({ lenUnit: 'cm', distUnit: 'mi' }), 'mi');
+  assert.equal(G.distUnitFor({ lenUnit: 'in', distUnit: 'auto' }), 'mi');
+  assert.equal(G.distUnitFor({ lenUnit: 'cm', distUnit: 'auto' }), 'km');
   assert.ok(Math.abs(G.toKm(G.fromKm(7.3, 'yd'), 'yd') - 7.3) < 1e-9);
 });
 

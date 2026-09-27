@@ -155,3 +155,40 @@ test('eat next: every suggestion respects avoid tags and dislikes', () => {
     assert.ok(!/dal/i.test(it.name), it.name);
   }
 });
+
+test('surprise me: with most of the day still ahead it suggests a dessert-sized, high-protein idea', () => {
+  const s = stateWith([]);
+  const r = D.surpriseMe(s, D.effective(s), '2026-09-21', {});
+  assert.equal(r.status, 'ok');
+  assert.ok(r.suggestion.items.length > 0);
+  assert.ok(r.suggestion.kcal <= 420, 'a treat should stay dessert-sized: ' + r.suggestion.kcal);
+  assert.ok(r.suggestion.protein >= 10, 'should lean high-protein: ' + r.suggestion.protein);
+});
+
+test('surprise me: when there is barely any room left it says so instead of forcing a dessert in', () => {
+  const full = stateWith([food('Feast', 'Dinner', 2800, 170, 330, 90)]);
+  const r = D.surpriseMe(full, D.effective(full), '2026-09-21', {});
+  assert.equal(r.status, 'none');
+  assert.equal(r.suggestion, null);
+});
+
+test('surprise me: never includes a food the diet or dislikes rule out, and a different salt can change the pick', () => {
+  const vegan = { plan, profile: { diet: 'Vegan' }, dietPrefs: null, foods: [] };
+  for (let salt = 0; salt < 6; salt++) {
+    const r = D.surpriseMe(vegan, D.effective(vegan), '2026-09-21', { salt });
+    for (const it of r.suggestion.items) assert.ok(D.FOOD[it.id].rank === 0, 'vegan surprise got ' + it.id);
+  }
+  const dislikes = { plan, profile: { diet: 'Vegetarian' }, dietPrefs: Object.assign(E.defaultDietPrefs(), { dislikes: ['almond'] }), foods: [] };
+  const rd = D.surpriseMe(dislikes, D.effective(dislikes), '2026-09-21', {});
+  assert.ok(!/almond/i.test(rd.suggestion.name));
+  const picks = new Set();
+  for (let salt = 0; salt < 8; salt++) picks.add(D.surpriseMe(dislikes, D.effective(dislikes), '2026-09-21', { salt }).suggestion.idea);
+  assert.ok(picks.size > 1, 'a different salt should be able to change the pick');
+});
+
+test('surprise me: the same date and preferences always give the same pick', () => {
+  const s = stateWith([]);
+  const a = D.surpriseMe(s, D.effective(s), '2026-09-21', {});
+  const b = D.surpriseMe(s, D.effective(s), '2026-09-21', {});
+  assert.equal(a.suggestion.idea, b.suggestion.idea);
+});

@@ -33,8 +33,9 @@
     hiking: { name: 'Hiking', pace: 'run', races: [['10 km', 10], ['20 km', 20], ['30 km', 30]] },
   };
   const sportOf = (s) => (Object.prototype.hasOwnProperty.call(SPORTS, s) ? SPORTS[s] : SPORTS.running);
-  // km or mi from the person's length unit (inches means miles).
-  const distUnitFor = (set) => (set && set.lenUnit === 'in' ? 'mi' : 'km');
+  // km or mi. An explicit choice in Settings wins; otherwise it follows the person's length unit (inches means miles),
+  // same as it always has, so nobody who has not visited that setting sees a change.
+  const distUnitFor = (set) => (set && (set.distUnit === 'km' || set.distUnit === 'mi') ? set.distUnit : (set && set.lenUnit === 'in' ? 'mi' : 'km'));
   // The unit a distance is typed in: swimming is in metres (or yards), the rest in km (or miles).
   function distInput(sport, unit) { return sport === 'swimming' ? (unit === 'mi' ? 'yd' : 'm') : (unit === 'mi' ? 'mi' : 'km'); }
   function toKm(v, u) { return u === 'm' ? v / 1000 : u === 'yd' ? v / YD_PER_KM : u === 'mi' ? v * KM_PER_MI : v; }

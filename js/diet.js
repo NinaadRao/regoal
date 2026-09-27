@@ -71,6 +71,9 @@
     salad: ['Salad (cucumber, tomato, onion)', 20, 1, 4, 0.2, [], 0],
     palak: ['Spinach or greens (cooked)', 45, 3, 4, 2, [], 0],
     broccoli: ['Broccoli or beans (cooked)', 35, 2.4, 7, 0.4, [], 0],
+    cocoa: ['Cocoa powder (unsweetened)', 228, 19.6, 57.9, 13.7, [], 0],
+    honey: ['Honey', 304, 0.3, 82.4, 0, [], 0],
+    darkchoc: ['Dark chocolate (70%)', 546, 7.8, 46, 31, [], 0],
   };
   const FOOD = {};
   for (const id of Object.keys(F)) {
@@ -158,6 +161,19 @@
   M('s_soya_chaat', 'Soya chunk chaat', 'snack', 'indian', true, [['soya', 25, 15, 50], ['salad', 100, 50, 200], ['oil', 0, 0, 10]]);
   M('s_tuna_toast', 'Tuna on toast', 'snack', 'western', true, [['tuna', 80, 50, 160], ['bread', 32, 32, 96], ['salad', 60, 0, 120]]);
 
+  // desserts ("surprise me"): not part of the daily meal slots, only offered on request.
+  M('x_choc_greek', 'Chocolate Greek yogurt with berries', 'dessert', 'western', true, [['greek', 200, 150, 400], ['cocoa', 8, 5, 15], ['honey', 10, 0, 20], ['berries', 60, 0, 150]]);
+  M('x_choc_pudding', 'Chocolate protein pudding', 'dessert', 'western', true, [['whey', 30, 30, 60], ['milk', 150, 100, 300], ['chia', 15, 10, 30], ['cocoa', 5, 0, 10]]);
+  M('x_vegan_pudding', 'Vegan chocolate protein pudding', 'dessert', 'western', true, [['peaprot', 30, 30, 60], ['soymilk', 150, 100, 300], ['chia', 15, 10, 30], ['cocoa', 5, 0, 10]]);
+  M('x_paneer_honey', 'Sweet paneer bites with honey and almonds', 'dessert', 'indian', true, [['paneer_lite', 100, 60, 200], ['honey', 12, 0, 24], ['almonds', 10, 0, 20]]);
+  M('x_pb_banana_bites', 'Peanut butter banana protein bites', 'dessert', 'western', true, [['banana', 118, 59, 236], ['oats', 20, 10, 40], ['pbutter', 16, 10, 32]]);
+  M('x_darkchoc_almond', 'Dark chocolate almond clusters', 'dessert', 'any', true, [['darkchoc', 20, 10, 40], ['almonds', 15, 10, 30], ['chia', 8, 0, 16]]);
+  M('x_curd_dates', 'Sweetened curd with dates and almonds', 'dessert', 'indian', true, [['curd', 200, 150, 350], ['dates', 16, 8, 32], ['almonds', 10, 0, 20]]);
+  M('x_chia_pudding', 'Berry chia pudding with milk', 'dessert', 'western', true, [['chia', 25, 20, 50], ['milk', 150, 100, 300], ['berries', 60, 0, 150], ['honey', 8, 0, 16]]);
+  M('x_date_energy_balls', 'Date and peanut energy balls', 'dessert', 'indian', true, [['dates', 40, 24, 80], ['peanuts', 20, 10, 40], ['oats', 15, 0, 30]]);
+  M('x_sattu_ladoo', 'Sattu and honey ladoo', 'dessert', 'indian', true, [['sattu', 30, 20, 60], ['honey', 12, 6, 24], ['ghee', 3, 0, 10]]);
+  M('x_peaprot_bites', 'Vegan protein energy bites', 'dessert', 'western', true, [['peaprot', 20, 15, 40], ['oats', 30, 20, 60], ['pbutter', 15, 10, 30], ['dates', 16, 0, 32]]);
+
   // ---------- slots ----------
   // Share of the day for each meal, by how many meals a day.
   const SLOT_SHARE = {
@@ -171,6 +187,7 @@
     lunch: { label: 'Lunch', meal: 'Lunch', kind: 'lunch', until: 16 },
     evening: { label: 'Evening snack', meal: 'Snack', kind: 'snack', until: 18.5 },
     dinner: { label: 'Dinner', meal: 'Dinner', kind: 'dinner', until: 30 },
+    dessert: { label: 'Dessert', meal: 'Snack', kind: 'dessert', until: 30 },
   };
   const slotIds = (meals) => Object.keys(SLOT_SHARE[meals] || SLOT_SHARE[4]);
 
@@ -417,7 +434,30 @@
     return out;
   }
 
-  const Diet = { FOOD, MEALS, SLOT_INFO, SLOT_SHARE, slotIds, effective, pool, allowed, fitMeal, buildDay, buildWeek, swapMeal, savable, eatNext, topUps, eatenSlots, nextSlot, dayTotals, describe, mac };
+  // ---------- surprise me (a treat) ----------
+  // A healthy, high-protein dessert idea sized to what is left of today's calories. Not part of the meal plan or its
+  // slots (a "dessert" idea is only ever offered here, on request), and it is not tied to the time of day.
+  function surpriseMe(state, prefs, date, opts) {
+    const o = opts || {}, plan = state.plan, tg = targetsOf(plan);
+    const tot = dayTotals(state, date);
+    const rem = { kcal: tg.kcal - tot.kcal, protein: r1(tg.protein - tot.protein), carbs: r1(tg.carbs - tot.carbs), fat: r1(tg.fat - tot.fat) };
+    const out = { date, remaining: rem, suggestion: null, status: 'ok' };
+    if (rem.kcal < 60) { out.status = 'none'; return out; }
+    // A treat should not eat the whole day's remaining room, and it aims to be high in protein rather than just whatever fits.
+    const cap = Math.min(rem.kcal, 320);
+    const target = { kcal: cap, protein: cap * 0.2 / 4, carbs: cap * 0.5 / 4, fat: cap * 0.3 / 9 };
+    const list = pool('dessert', prefs);
+    if (!list.length) { out.status = 'none'; return out; }
+    const scored = list.map((idea) => ({ idea, fitted: fitMeal(idea, target, prefs) }))
+      .sort((a, b) => a.fitted.cost - b.fitted.cost || (a.idea.id < b.idea.id ? -1 : 1));
+    // Picked from among the closest few fits, not always the single best, so asking again can actually surprise.
+    const top = scored.slice(0, Math.min(3, scored.length));
+    const idx = hash('surprise' + prefs.seed + date + (o.salt || 0)) % top.length;
+    out.suggestion = shape(top[idx].idea, top[idx].fitted, 'dessert', {});
+    return out;
+  }
+
+  const Diet = { FOOD, MEALS, SLOT_INFO, SLOT_SHARE, slotIds, effective, pool, allowed, fitMeal, buildDay, buildWeek, swapMeal, savable, eatNext, surpriseMe, topUps, eatenSlots, nextSlot, dayTotals, describe, mac };
   if (typeof module !== 'undefined' && module.exports) module.exports = Diet;
   else root.Diet = Diet;
 })(typeof self !== 'undefined' ? self : this);

@@ -1056,6 +1056,32 @@ async function main() {
     eq(await page.evaluate(() => Store.getState().profile.age), before.age, 'voiding the edit restores the old values');
   });
 
+  await step('Settings: a distance unit choice overrides the length-unit fallback everywhere', async () => {
+    await page.evaluate(() => Store.saveSettings({ lenUnit: 'cm' }));
+    eq(await page.evaluate(() => Goals.distUnitFor(Store.getSettings())), 'km', 'metric height defaults distance to km when no choice is made');
+    await route(page, '#/settings');
+    const distSeg = page.locator('.segwrap', { hasText: 'Distance' });
+    await distSeg.getByRole('radio', { name: 'mi', exact: true }).click();
+    eq(await page.evaluate(() => Store.getSettings().distUnit), 'mi');
+    eq(await page.evaluate(() => Goals.distUnitFor(Store.getSettings())), 'mi', 'the explicit choice overrides the metric height');
+    await route(page, '#/activity');
+    await page.getByRole('button', { name: 'Log a workout' }).first().click();
+    const sh = page.locator('#sheets');
+    await sh.getByLabel('Activity', { exact: true }).selectOption('running');
+    eq(await sh.locator('.unit').last().innerText(), 'mi', 'the distance field itself switched to miles');
+    await sh.getByLabel('How long').fill('30');
+    await sh.getByLabel('Distance (optional)').fill('3');
+    await sh.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText(/^Logged ~\d/).first().waitFor();
+    const w = await page.evaluate(() => Store.getState().workouts.filter((x) => x.type === 'running').pop());
+    ok(Math.abs(w.km - 4.828) < 0.02, 'still stored in km internally: ' + w.km);
+    await route(page, '#/activity');
+    ok(/\bmi\b/.test(await page.locator('.card', { hasText: 'History' }).innerText()), 'shown in miles in History despite the metric height');
+    await route(page, '#/settings');
+    await distSeg.getByRole('radio', { name: 'Auto', exact: true }).click();
+    eq(await page.evaluate(() => Goals.distUnitFor(Store.getSettings())), 'km', 'Auto goes back to following Measurements (still cm)');
+  });
+
   await step('a new backup always has the same file name so it replaces the old one', async () => {
     await route(page, '#/settings');
     ok(await page.getByText(/Choose a backup folder|This browser cannot delete old backups/).count() >= 1, 'the folder option or the honest note is shown');
@@ -1836,6 +1862,32 @@ async function main() {
     // log a suggestion
     const n0 = await dpage.evaluate(() => Store.getState().foods.length);
     await dpage.locator('section.card', { hasText: 'What should I eat next?' }).getByRole('button', { name: 'Log this' }).first().click();
+    await dpage.waitForFunction((n) => Store.getState().foods.length > n, n0);
+  });
+
+  await step('Fuel: "Surprise me" offers a dessert idea sized to what is left, respects the diet, and can be logged', async () => {
+    // Start the day fresh so there is plenty of room left for a treat, regardless of what earlier steps logged.
+    await dpage.evaluate(async () => {
+      const st = Store.getState(), today = U.today();
+      for (const f of st.foods) if (f.date === today) await Store.voidEvent(f.seq);
+    });
+    await route(dpage, '#/fuel');
+    const card = () => dpage.locator('section.card', { hasText: 'Surprise me' });
+    await card().waitFor();
+    eq(await card().locator('.sugg').count(), 0, 'not revealed until asked');
+    await card().getByRole('button', { name: 'Surprise me', exact: true }).click();
+    await card().locator('.sugg').first().waitFor();
+    const bad = /paneer|curd|milk|egg|chicken|fish|prawn|tuna|whey|ghee|tofu|soy/i;
+    ok(!bad.test(await card().locator('.sugg').first().innerText()), 'the dessert follows the diet: ' + (await card().locator('.sugg').first().innerText()));
+    const names = new Set([await card().locator('.sugg .mealhead').innerText()]);
+    for (let i = 0; i < 6; i++) {
+      await card().getByRole('button', { name: 'Surprise me again' }).click();
+      names.add(await card().locator('.sugg .mealhead').innerText());
+      ok(!bad.test(await card().locator('.sugg').first().innerText()), 'still follows the diet after a reroll');
+    }
+    ok(names.size > 1, 'asking again can change the pick: ' + Array.from(names).join(' | '));
+    const n0 = await dpage.evaluate(() => Store.getState().foods.length);
+    await card().getByRole('button', { name: 'Log this' }).click();
     await dpage.waitForFunction((n) => Store.getState().foods.length > n, n0);
   });
 

@@ -213,4 +213,28 @@
     kids.push(UI.btn('See the week\'s diet plan', { href: '#/diet', kind: 'quiet' }));
     return UI.card(...kids);
   };
+
+  // ---------- Fuel: surprise me (a treat) ----------
+  let surpriseOpen = false, surpriseSalt = 0;
+  Screens.surpriseCard = function () {
+    const kids = [h('div', { class: 'ct' }, 'Surprise me'), h('div', { class: 'muted small' }, 'A healthy, high-protein dessert idea, sized to what you have left today.')];
+    if (!surpriseOpen) {
+      kids.push(UI.btn('Surprise me', { onClick: () => { surpriseOpen = true; root.App.render(); } }));
+      return UI.card(...kids);
+    }
+    const st = Store.getState(), prefs = Diet.effective(st), date = U.today();
+    const r = Diet.surpriseMe(st, prefs, date, { salt: surpriseSalt });
+    if (r.status === 'none') {
+      kids.push(h('div', { class: 'muted' }, r.remaining.kcal <= 0 ? 'You are already at (or past) today\'s calories, so nothing fits without going further over.' : 'Not much room left today for a treat.'));
+    } else {
+      const s = r.suggestion;
+      kids.push(h('div', { class: 'sugg' },
+        h('div', { class: 'mealhead' }, h('b', null, s.name)),
+        h('div', { class: 'muted small' }, s.items.map((i) => i.label + ' ' + i.name).join(' · ')),
+        h('div', { class: 'muted small' }, U.withCommas(s.kcal) + ' kcal · ' + macroText(s)),
+        UI.btn('Log this', { kind: 'quiet', onClick: () => { logItems(s.items, s.meal, date).then(() => { U.toast('Logged.'); root.App.render(); }); } })));
+      kids.push(UI.btn('Surprise me again', { kind: 'quiet', onClick: () => { surpriseSalt++; root.App.render(); } }));
+    }
+    return UI.card(...kids);
+  };
 })(self);

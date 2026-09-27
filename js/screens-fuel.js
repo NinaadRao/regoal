@@ -99,7 +99,7 @@
     const hint = !root.App.aiReady() ? h('div', { class: 'muted small' }, 'Tip: add your own AI key in Coach settings and you can just describe a meal or list raw ingredients. You will always see the numbers before anything is saved.') : null;
     return UI.page(UI.header('Fuel', 'Log what you ate. Approximate is fine, consistent is better.'),
       UI.scroller(nav, summary, UI.btn('Add food', { icon: 'plus', onClick: () => openAdd(date) }), date === t ? Screens.eatNextCard() : null,
-        ...(sections.length ? sections : [UI.empty(date === t ? 'Nothing logged yet today.' : 'Nothing logged this day.')]), hint));
+        ...(sections.length ? sections : [UI.empty(date === t ? 'Nothing logged yet today.' : 'Nothing logged this day.')]), date === t ? Screens.surpriseCard() : null, hint));
   };
 
   // ---------- edit an existing entry ----------
