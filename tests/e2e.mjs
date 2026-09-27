@@ -1082,6 +1082,44 @@ async function main() {
     eq(await page.evaluate(() => Goals.distUnitFor(Store.getSettings())), 'km', 'Auto goes back to following Measurements (still cm)');
   });
 
+  await step('logging a workout: a per-entry unit toggle switches km/mi (and m/yd for swimming) without touching Settings', async () => {
+    await route(page, '#/activity');
+    const runBefore = await page.evaluate(() => Store.getState().workouts.filter((x) => x.type === 'running').length);
+    await page.getByRole('button', { name: 'Log a workout' }).first().click();
+    const sh = page.locator('#sheets');
+    await sh.getByLabel('Activity', { exact: true }).selectOption('running');
+    const unitBox = sh.locator('.segwrap', { hasText: 'Distance unit' });
+    eq(await unitBox.getByRole('radio', { checked: true }).innerText(), 'km', 'starts on the Settings default (Auto -> km here)');
+    eq(await sh.locator('.unit').last().innerText(), 'km');
+    await sh.getByLabel('Distance (optional)').fill('5');
+    await unitBox.getByRole('radio', { name: 'mi', exact: true }).click();
+    eq(await sh.locator('.unit').last().innerText(), 'mi', 'the field switched to miles');
+    ok(Math.abs(parseFloat(await sh.getByLabel('Distance (optional)').inputValue()) - 3.11) < 0.02, 'the typed 5 km was converted to miles, not just relabeled');
+    await unitBox.getByRole('radio', { name: 'km', exact: true }).click();
+    ok(Math.abs(parseFloat(await sh.getByLabel('Distance (optional)').inputValue()) - 5) < 0.05, 'converting back lands close to the original 5 km');
+    await sh.getByLabel('How long').fill('20');
+    await sh.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction((n) => Store.getState().workouts.filter((x) => x.type === 'running').length > n, runBefore);
+    const w1 = await page.evaluate(() => Store.getState().workouts.filter((x) => x.type === 'running').pop());
+    ok(Math.abs(w1.km - 5) < 0.05, 'saved distance still lands near 5 km: ' + w1.km);
+    eq(await page.evaluate(() => Store.getSettings().distUnit), 'auto', 'the per-entry toggle never touched the Settings choice');
+    // swimming: the same km/mi toggle maps to metres and yards
+    const swimBefore = await page.evaluate(() => Store.getState().workouts.filter((x) => x.type === 'swimming').length);
+    await page.getByRole('button', { name: 'Log a workout' }).first().click();
+    const sh2 = page.locator('#sheets').last();
+    await sh2.getByLabel('Activity', { exact: true }).selectOption('swimming');
+    const unitBox2 = sh2.locator('.segwrap', { hasText: 'Distance unit' });
+    eq(await sh2.locator('.unit').last().innerText(), 'm');
+    await unitBox2.getByRole('radio', { name: 'mi', exact: true }).click();
+    eq(await sh2.locator('.unit').last().innerText(), 'yd', 'swimming shows yards under the mi family, not raw miles');
+    await sh2.getByLabel('Distance (optional)').fill('1500');
+    await sh2.getByLabel('How long').fill('30');
+    await sh2.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction((n) => Store.getState().workouts.filter((x) => x.type === 'swimming').length > n, swimBefore);
+    const w2 = await page.evaluate(() => Store.getState().workouts.filter((x) => x.type === 'swimming').pop());
+    ok(Math.abs(w2.km - 1.3716) < 0.01, '1,500 yd stored correctly in km: ' + w2.km);
+  });
+
   await step('a new backup always has the same file name so it replaces the old one', async () => {
     await route(page, '#/settings');
     ok(await page.getByText(/Choose a backup folder|This browser cannot delete old backups/).count() >= 1, 'the folder option or the honest note is shown');

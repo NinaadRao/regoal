@@ -76,8 +76,17 @@
     const minsF = UI.field({ label: 'How long', unit: 'min', type: 'number', inputmode: 'numeric', value: ex ? ex.mins : o.mins || '', flex: 1 });
     const kcalF = UI.field({ label: 'Calories burnt', unit: 'kcal', type: 'number', inputmode: 'numeric', value: ex && ex.manual ? ex.kcal : '', flex: 1 });
     // Distance, for sports Goals can measure. Kept in km; typed in the person's unit (metres or yards for swimming).
-    const du = G.distUnitFor(set), isSport = (tp) => Object.prototype.hasOwnProperty.call(G.SPORTS, tp), distU = () => G.distInput(type, du);
+    // The Distance choice in Settings sets the default unit here; the toggle below lets just this entry use the other one.
+    const du = G.distUnitFor(set), isSport = (tp) => Object.prototype.hasOwnProperty.call(G.SPORTS, tp);
+    let duPick = du;
+    const distU = () => G.distInput(type, duPick);
     const kmF = UI.field({ label: 'Distance (optional)', unit: distU(), type: 'number', value: ex && ex.km ? String(Math.round(G.fromKm(ex.km, G.distInput(ex.type, du)) * 100) / 100) : o.km ? String(o.km) : '', hint: 'Counts towards your running, cycling or swimming goals.' });
+    const unitSeg = UI.seg({ label: 'Distance unit', options: [{ value: 'km', label: 'km' }, { value: 'mi', label: 'mi' }], value: duPick, onChange: (v) => {
+      const oldU = distU(), cur = numOrNull(kmF.input.value);
+      duPick = v;
+      if (cur != null) kmF.input.value = String(Math.round(G.fromKm(G.toKm(cur, oldU), distU()) * 100) / 100);
+      refresh();
+    } });
     const paceLine = h('div', { class: 'muted small' });
     const noteF = UI.field({ label: 'Note (optional)', value: ex ? ex.note : '', maxlength: 200, hint: 'Stays on this device. The coach never sees it.' });
 
@@ -178,15 +187,16 @@
           h('div', { class: 'muted small' }, 'Leave an exercise empty to skip it. ' + (already ? plural(already, 'set') + ' from Today are already logged for this day, so only add what is missing.' : 'Sets you log here count towards your lift targets.'))));
     if (!linked.length) buildRows();
 
-    const body = h('div', { class: 'stack' }, h('label', { class: 'field' }, h('span', { class: 'lab' }, 'Activity'), typeSel), labelF, dateF, strengthBox, UI.row(minsF, kcalF), kmF, paceLine, effortSeg, effortHint, estLine, noteF, photoBtn, photoInput, photoRow, photoNote);
+    const body = h('div', { class: 'stack' }, h('label', { class: 'field' }, h('span', { class: 'lab' }, 'Activity'), typeSel), labelF, dateF, strengthBox, UI.row(minsF, kcalF), kmF, unitSeg, paceLine, effortSeg, effortHint, estLine, noteF, photoBtn, photoInput, photoRow, photoNote);
     function refresh() {
       type = typeSel.value;
       labelF.classList.toggle('hidden', type !== 'other');
       strengthBox.classList.toggle('hidden', type !== 'strength');
       kmF.classList.toggle('hidden', !isSport(type));
+      unitSeg.classList.toggle('hidden', !isSport(type));
       kmF.querySelector('.unit').textContent = distU();
       const kmv = numOrNull(kmF.input.value), mn = numOrNull(minsF.input.value);
-      paceLine.textContent = isSport(type) && kmv > 0 && mn > 0 ? 'Pace ' + G.fmtPace(mn * 60 / G.toKm(kmv, distU()), type, du) : '';
+      paceLine.textContent = isSport(type) && kmv > 0 && mn > 0 ? 'Pace ' + G.fmtPace(mn * 60 / G.toKm(kmv, distU()), type, duPick) : '';
       const mins = numOrNull(minsF.input.value), date = dateF.input.value || t;
       const est = mins > 0 ? E.estimateKcal(type, effort, mins, E.bodyKg(st, date)) : 0;
       kcalF.input.placeholder = est ? String(est) : '';
