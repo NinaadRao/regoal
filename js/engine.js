@@ -203,6 +203,20 @@
     const confidence = ['low', 'medium', 'high'].includes(raw.confidence) ? raw.confidence : 'medium';
     return { ok: true, value: { name, equip, bw, sets, reps, kg, assumptions, confidence } };
   }
+  // A Switch chosen right on Today: for one date, one planned exercise (by id) is replaced by another. Only for
+  // that day; the plan itself, and the original exercise's own progression, are untouched.
+  function cleanExerciseSwitch(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || hasBadKeys(raw, 0)) return { ok: false, errors: ['That is not a switch.'] };
+    const date = String(raw.date || '');
+    if (!validISO(date)) return { ok: false, errors: ['Bad date.'] };
+    const from = String(raw.from || '');
+    if (!/^[a-z0-9_]{1,40}$/.test(from)) return { ok: false, errors: ['Bad id.'] };
+    const to = normalizeLiftSwap(raw.to);
+    if (!to.ok) return to;
+    return { ok: true, value: { date, from, to: to.value } };
+  }
+  // The active switch (if any) for one exercise on one date, or null.
+  function exSwitchFor(state, date, from) { return (state.exSwitches && state.exSwitches[date + '|' + from]) || null; }
 
   // The block (0 to 4) a week falls in. Blocks are laid out for a 26-week plan; other lengths are stretched or squeezed to fit.
   function blockOfWeek(w, weeks) {
@@ -585,7 +599,7 @@
   function project(events) {
     const voided = new Set();
     for (const e of events) if (e.type === 'event_voided') voided.add(e.data.target);
-    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
+    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), exSwitches: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
     for (const e of events) {
       if (voided.has(e.seq) || e.type === 'event_voided') continue;
       const d = e.data || {};
@@ -610,6 +624,7 @@
           if (validISO(date) && name) s.moves[date] = name;
           break;
         }
+        case 'exercise_switched': { const r = cleanExerciseSwitch(d); if (r.ok) s.exSwitches[r.value.date + '|' + r.value.from] = Object.assign({ seq: e.seq }, r.value); break; }
         default: break;
       }
       } catch (err) { /* one unusable event must never stop the app from opening; it is skipped */ }
@@ -834,7 +849,7 @@
   }
 
   // ---------- backup / import validation ----------
-  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
+  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
   const BAD_KEYS = ['__proto__', 'constructor', 'prototype'];
   function hasBadKeys(o, depth) {
     if (o === null || typeof o !== 'object') return false;
@@ -1254,7 +1269,7 @@
     buildWorkouts, buildPlan, weeklyTargets, validateMacroChange, validateLiftChange, project, avgWeightSeries, latestMeas, setsForWeek,
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
-    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST,
+    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor,
     validISO, hasLift, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,

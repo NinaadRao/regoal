@@ -360,6 +360,34 @@ test('normalizeLiftSwap: clamps a good suggestion and refuses an unsafe or namel
   assert.equal(clamped.value.kg, null, 'a weight over 700 kg is dropped rather than trusted');
 });
 
+test('cleanExerciseSwitch: rebuilds a switch from a whitelist, and refuses a bad date, id or exercise', () => {
+  const good = E.cleanExerciseSwitch({ date: '2026-01-06', from: 'acc_single_arm_cable_pulldown', to: { name: 'One-arm dumbbell row', sets: 3, reps: 10 } });
+  assert.equal(good.ok, true);
+  assert.equal(good.value.date, '2026-01-06');
+  assert.equal(good.value.from, 'acc_single_arm_cable_pulldown');
+  assert.equal(good.value.to.name, 'One-arm dumbbell row');
+
+  assert.equal(E.cleanExerciseSwitch({ date: 'not-a-date', from: 'x', to: { name: 'y' } }).ok, false);
+  assert.equal(E.cleanExerciseSwitch({ date: '2026-01-06', from: 'Not An Id!', to: { name: 'y' } }).ok, false, 'the id must be a plain identifier');
+  assert.equal(E.cleanExerciseSwitch({ date: '2026-01-06', from: 'x', to: { name: '' } }).ok, false, 'a nameless exercise is refused');
+  assert.equal(E.cleanExerciseSwitch(null).ok, false);
+  assert.equal(E.cleanExerciseSwitch(JSON.parse('{"date":"2026-01-06","from":"x","to":{"name":"y"},"__proto__":{"polluted":true}}')).ok, false);
+});
+
+test('exSwitchFor and project(): a switch applies only to its own date and id, and voiding it removes it', () => {
+  const plan = E.buildPlan(answers());
+  const events = [
+    { seq: 1, ts: 't', type: 'profile_created', data: { profile: {}, plan } },
+    { seq: 2, ts: 't', type: 'exercise_switched', data: { date: '2026-01-06', from: 'acc_x', to: { name: 'Push-up', sets: 3, reps: 15, bw: true } } },
+  ];
+  const st = E.project(events);
+  assert.equal(E.exSwitchFor(st, '2026-01-06', 'acc_x').to.name, 'Push-up');
+  assert.equal(E.exSwitchFor(st, '2026-01-07', 'acc_x'), null, 'a different date has no switch');
+  assert.equal(E.exSwitchFor(st, '2026-01-06', 'acc_y'), null, 'a different exercise has no switch');
+  const voided = E.project(events.concat([{ seq: 3, ts: 't', type: 'event_voided', data: { target: 2 } }]));
+  assert.equal(E.exSwitchFor(voided, '2026-01-06', 'acc_x'), null, 'voiding the switch removes it');
+});
+
 // ---------- water: goal, logging and the pacing nudge ----------
 test('waterGoalMl: body weight sets the baseline, and training minutes add a capped extra', () => {
   const plan = E.buildPlan(answers());

@@ -164,6 +164,78 @@ async function main() {
     eq([logged.lift, logged.reps, logged.name], ['acc_face_pulls', 15, 'Face pulls'], 'saved as an ordinary accessory set');
   });
 
+  await step('Today: Switch offers a built-in alternative right on the workout row, and can be switched back before you start', async () => {
+    await route(page, '#/today');
+    const target = await page.evaluate(() => {
+      const st = Store.getState(), t = U.today();
+      const wo = Engine.sessionFor(st.plan, st.moves, t).session;
+      const exx = wo && wo.ex.find((e) => !e.lift && e.m && !Engine.exSwitchFor(st, t, 'acc_' + Engine.slug(e.n)) && !st.sets.some((s) => s.date === t && s.lift === 'acc_' + Engine.slug(e.n)));
+      return exx ? { name: exx.n } : null;
+    });
+    ok(target, 'today\'s session should include an untracked accessory exercise with nothing logged yet');
+    const row = () => page.locator('.exrow', { hasText: target.name }).first();
+    await row().getByRole('button', { name: 'Switch ' + target.name + ' for an alternative' }).click();
+    const sw = page.locator('#sheets').last();
+    await sw.getByText('Switch ' + target.name).waitFor();
+    const cands = sw.locator('.listrow');
+    ok(await cands.count() > 0, 'the built-in list found at least one same-muscle alternative');
+    const candName = await cands.first().locator('b').innerText();
+    await cands.first().click();
+    const newRow = () => page.locator('.exrow', { hasText: candName }).first();
+    await newRow().getByText('Switched from ' + target.name, { exact: false }).waitFor();
+    // Switched back before logging anything: the original exercise returns, with no trace of the switch.
+    const undoBtn = newRow().getByRole('button', { name: 'Switch back to ' + target.name });
+    await undoBtn.click();
+    await undoBtn.waitFor({ state: 'detached' });
+    ok(!/Switched from/.test(await row().innerText()), 'back to the original exercise, no longer marked switched');
+    // Switch again and this time log a set: it is saved under the new exercise's name, not the original, and
+    // once something is logged the switch for today is locked in (no more Switch or Switch back on this row).
+    await row().getByRole('button', { name: 'Switch ' + target.name + ' for an alternative' }).click();
+    await sw.getByText('Switch ' + target.name).waitFor();
+    await cands.first().click();
+    await newRow().getByRole('button', { name: '+ Log set' }).click();
+    const sh2 = page.locator('#sheets').last();
+    await sh2.getByLabel('Reps', { exact: true }).fill('12');
+    const before = await page.evaluate(() => Store.getState().sets.length);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction((n) => Store.getState().sets.length > n, before);
+    const logged = await page.evaluate((n) => Store.getState().sets.filter((s) => s.name && s.name.toLowerCase() === n.toLowerCase()), candName);
+    ok(logged.length > 0, 'a set was logged under the new exercise name, not the original: ' + JSON.stringify(logged));
+    const rowText = await newRow().innerText();
+    ok(!/Switch back/.test(rowText), 'once a set is logged, the switch for today can no longer be undone');
+  });
+
+  await step('Today: Switch can ask AI for an alternative and a starting weight, shown for confirmation first', async () => {
+    await route(page, '#/today');
+    const target = await page.evaluate(() => {
+      const st = Store.getState(), t = U.today();
+      const wo = Engine.sessionFor(st.plan, st.moves, t).session;
+      const exx = wo && wo.ex.find((e) => !e.lift && e.m && !Engine.exSwitchFor(st, t, 'acc_' + Engine.slug(e.n)) && !st.sets.some((s) => s.date === t && s.lift === 'acc_' + Engine.slug(e.n)));
+      return exx ? { name: exx.n } : null;
+    });
+    ok(target, 'today\'s session should include another untracked accessory exercise with nothing logged yet');
+    await page.evaluate(() => App.setKey('sk-ant-test-0000000000', 'typed'));
+    const row = () => page.locator('.exrow', { hasText: target.name }).first();
+    await row().getByRole('button', { name: 'Switch ' + target.name + ' for an alternative' }).click();
+    const sw = page.locator('#sheets').last();
+    await sw.getByRole('button', { name: 'Ask AI to suggest one instead' }).click();
+    await sw.getByLabel('What do you have instead? (optional)').fill('travelling, hotel gym only');
+    const reply = { name: 'Hotel gym cable row', equip: 'machine', sets: 3, reps: 12, kg: 25, assumptions: ['A hotel cable stack is lighter than a home gym one'], confidence: 'low' };
+    const seen = await fakeAI(page, async (body) => {
+      ok(JSON.stringify(body).includes('hotel gym'), 'the note reaches the model');
+      return { body: textReply(JSON.stringify(reply)) };
+    });
+    await sw.getByRole('button', { name: 'Ask AI', exact: true }).click();
+    await sw.getByText('A hotel cable stack is lighter').waitFor();
+    eq(seen.length, 1);
+    eq(await sw.getByLabel('Exercise', { exact: true }).inputValue(), 'Hotel gym cable row');
+    await sw.getByRole('button', { name: 'Use this' }).click();
+    const newRow = page.locator('.exrow', { hasText: 'Hotel gym cable row' }).first();
+    await newRow.getByText('Switched from ' + target.name, { exact: false }).waitFor();
+    await page.evaluate(() => App.clearKey());
+    await page.unroute('https://api.anthropic.com/**');
+  });
+
   await step('Water: a goal from body weight, quick-add pills, a custom amount, and removing an entry', async () => {
     await route(page, '#/today');
     const card = () => page.locator('section.card', { hasText: 'Water' }).first();

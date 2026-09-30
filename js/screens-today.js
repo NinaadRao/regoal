@@ -1,7 +1,7 @@
 /* Today (workout + set logging + rest timer), Lifts (week-by-week targets) and a single lift's detail. */
 (function (root) {
   'use strict';
-  const E = root.Engine, U = root.U, UI = root.UI, Store = root.Store;
+  const E = root.Engine, U = root.U, UI = root.UI, Store = root.Store, LiftAI = root.LiftAI;
   const { h, s } = U;
   const Screens = root.Screens = root.Screens || {};
 
@@ -159,6 +159,87 @@
   }
   Screens.switchGoalSheet = switchGoalSheet;
 
+  // ---------- Switch: swap a planned exercise for an alternative, right on Today ----------
+  // ex: the planned entry (ex.n, ex.m muscle, ex.lift? tracked id, ex.sets, ex.range). origId: its id for today.
+  // date, week: today's date and plan week, so the suggestion carries over sensible starting numbers. Nothing is
+  // logged here; a picked candidate is saved as an 'exercise_switched' event for just this date, so the row shows
+  // the new exercise instead and any sets logged from then on are logged under it. The original exercise's own
+  // plan and progression are untouched, and no AI call happens unless "Ask AI" is tapped.
+  function switchSheetToday(ex, origId, date, week) {
+    const st = Store.getState(), plan = st.plan, set = Store.getSettings(), lu = set.liftUnit;
+    const lift = ex.lift ? plan.lifts[ex.lift] : null;
+    const tg = lift ? E.liftTarget(lift, week, E.targetOpts(plan)) : null;
+    const lo = parseInt(ex.range, 10);
+    const orig = { name: ex.n, muscle: ex.m, sets: tg ? tg.sets : (ex.sets || 3), reps: tg ? tg.reps : (lo > 0 ? lo : 10), kg: tg ? tg.kg : null, bw: !!(lift && lift.bw) };
+    const state = { note: '', busy: null, err: '', ai: null };
+    const body = h('div', { class: 'stack' });
+    const apply = (cand) => {
+      const chk = E.cleanExerciseSwitch({ date, from: origId, to: cand });
+      if (!chk.ok) { U.toast(chk.errors[0], 'warn'); return; }
+      Store.append('exercise_switched', chk.value).then(() => { U.toast('Switched to ' + cand.name + '.'); close(); root.App.render(); });
+    };
+    function drawRules() {
+      const cands = E.substituteCandidates(orig);
+      const kids = [h('div', { class: 'muted small' }, 'Same muscle group (' + cap(orig.muscle) + '), different equipment. Starting numbers carry over from ' + ex.n + ' — adjust once you feel it out.')];
+      if (!cands.length) kids.push(h('div', { class: 'muted' }, 'No built-in alternative for this one yet. Try Ask AI below.'));
+      for (const c of cands) {
+        kids.push(h('button', { type: 'button', class: 'listrow', onclick: () => apply(c) },
+          h('div', { class: 'grow' }, h('b', null, c.name), h('span', { class: 'muted small' }, c.sets + ' x ' + c.reps + (c.bw ? ' (bodyweight)' : c.kg != null ? ' @ ' + U.fmtLift(c.kg, lu) : ''))),
+          U.icon('chev', 16)));
+      }
+      if (root.App.aiReady()) kids.push(UI.btn('Ask AI to suggest one instead', { kind: 'quiet', onClick: () => { state.err = ''; drawAiForm(); } }));
+      else kids.push(h('div', { class: 'muted small' }, 'Add your own AI key in Coach settings and it can also reason about a starting weight, not just pick from this list.'));
+      U.put(U.clear(body), ...kids);
+    }
+    function drawAiForm() {
+      const cfg = root.App.llmConfig();
+      let host = ''; try { host = new URL(root.LLM.endpointOf(cfg)).host; } catch (e) { host = 'your provider'; }
+      const nf = UI.field({ label: 'What do you have instead? (optional)', value: state.note, maxlength: 120, placeholder: 'no cable machine, only dumbbells...', onInput: (v) => { state.note = v; } });
+      const errBox = state.err ? h('div', { class: 'warnbox', role: 'alert' }, state.err) : null;
+      const go = h('button', { type: 'button', class: 'btn primary block' }, state.busy ? 'Stop' : 'Ask AI');
+      if (state.busy) go.insertBefore(h('span', { class: 'spin' }), go.firstChild);
+      go.addEventListener('click', async () => {
+        if (state.busy) { state.busy.abort(); return; }
+        const ctl = new AbortController();
+        state.busy = ctl; state.err = ''; drawAiForm();
+        try {
+          const r = await LiftAI.substitute(cfg, { name: ex.n, muscle: orig.muscle, sets: orig.sets, reps: orig.reps, kg: orig.kg, bw: orig.bw, note: state.note, signal: ctl.signal });
+          if (state.busy !== ctl) return;
+          state.busy = null; state.ai = r; drawAiConfirm();
+        } catch (e) {
+          if (state.busy !== ctl) return;
+          state.busy = null;
+          state.err = e && e.name === 'AbortError' ? 'Stopped.' : String(e && e.message ? e.message : e).slice(0, 300);
+          drawAiForm();
+        }
+      });
+      U.put(U.clear(body), nf, h('div', { class: 'muted small' }, 'Sends the exercise name, muscle group, current plan and this note (if any) to ' + host + ' with your key. Nothing changes until you confirm.'),
+        errBox, go, UI.btn('Use a built-in alternative instead', { kind: 'quiet', onClick: drawRules }));
+    }
+    function drawAiConfirm() {
+      const v = state.ai.value;
+      const nameF = UI.field({ label: 'Exercise', value: v.name, maxlength: 60 });
+      const setsF = UI.field({ label: 'Sets', type: 'number', value: v.sets, flex: 1 });
+      const repsF = UI.field({ label: 'Reps', type: 'number', value: v.reps, flex: 1 });
+      const kgF = UI.field({ label: 'Starting weight', unit: lu, type: 'number', value: v.kg == null ? '' : U.fmtWeight(v.kg, lu, 1), flex: 1 });
+      kgF.classList.toggle('hidden', v.bw);
+      const bwToggle = UI.toggleRow('Bodyweight', 'No added weight.', v.bw, (on) => { v.bw = on; kgF.classList.toggle('hidden', on); });
+      const okBtn = h('button', { type: 'button', class: 'btn primary block' }, 'Use this');
+      okBtn.addEventListener('click', () => {
+        const bw = v.bw, kgVal = bw ? null : U.unitToKg(numOrNull(kgF.input.value) || 0, lu);
+        const chk = E.normalizeLiftSwap({ name: nameF.input.value, equip: bw ? 'bw' : v.equip, bw, sets: numOrNull(setsF.input.value), reps: numOrNull(repsF.input.value), kg: bw ? null : kgVal });
+        if (!chk.ok) return U.toast(chk.errors[0], 'warn');
+        apply(chk.value);
+      });
+      const kids = [nameF, UI.row(setsF, repsF), bwToggle, kgF];
+      if (v.assumptions.length) kids.push(h('ul', { class: 'assume' }, ...v.assumptions.map((a) => h('li', null, a))));
+      kids.push(okBtn, h('div', { class: 'row' }, UI.btn('Ask again', { kind: 'quiet', onClick: drawAiForm }), UI.btn('Use a built-in alternative instead', { kind: 'quiet', onClick: drawRules })));
+      U.put(U.clear(body), ...kids);
+    }
+    drawRules();
+    const close = U.sheet('Switch ' + ex.n, body, [{ label: 'Cancel' }]);
+  }
+
   // ---------- Today ----------
   Screens.today = function () {
     const st = Store.getState(), plan = st.plan, set = Store.getSettings();
@@ -221,11 +302,22 @@
       const usedIds = new Set();
       for (const ex of wo.ex) {
         const lift = ex.lift ? plan.lifts[ex.lift] : null;
-        const id = lift ? lift.id : 'acc_' + slug(ex.n);
-        usedIds.add(id);
+        const origId = lift ? lift.id : 'acc_' + slug(ex.n);
+        usedIds.add(origId);
+        const sw = E.exSwitchFor(st, t, origId);
+        const id = sw ? 'acc_' + slug(sw.to.name) : origId;
+        if (sw) usedIds.add(id);
         const mine = todaySets.filter((x) => x.lift === id);
+        const label = sw ? sw.to.name : ex.n;
         let targetTxt, defaultKg = null, defaultReps = null, bw = false;
-        if (lift) {
+        if (sw) {
+          bw = sw.to.bw;
+          targetTxt = sw.to.sets + ' x ' + sw.to.reps + (bw || sw.to.kg == null ? ' reps' : ' @ ' + U.fmtLift(sw.to.kg, set.liftUnit));
+          defaultKg = sw.to.kg; defaultReps = sw.to.reps;
+          const lastMine = mine.filter((x) => !x.warmup).slice(-1)[0];
+          if (lastMine) defaultKg = lastMine.kg;
+          if (mine.filter((x) => !x.warmup).length >= sw.to.sets) doneEx++;
+        } else if (lift) {
           const tg = E.liftTarget(lift, week, E.targetOpts(plan));
           bw = !!lift.bw;
           targetTxt = tg.sets + ' x ' + tg.reps + (tg.kg == null ? ' reps' : ' @ ' + U.fmtLift(tg.kg, set.liftUnit));
@@ -241,9 +333,16 @@
           if (lastMine) defaultKg = lastMine.kg;
           if (mine.filter((x) => !x.warmup).length >= ex.sets) doneEx++;
         }
-        const opts = { liftId: id, label: ex.n, bw, defaultKg, defaultReps, restSec: ex.rest || 90 };
+        const opts = { liftId: id, label, bw, defaultKg, defaultReps, restSec: ex.rest || 90 };
+        const canSwitch = mine.length === 0; // decide before the first set; keeps the id stable once you've started
         list.appendChild(h('div', { class: 'exrow' },
-          h('div', { class: 'exname' }, h('span', null, ex.n), h('span', { class: 'extarget' }, targetTxt)),
+          h('div', { class: 'exname' },
+            h('div', { class: 'row' },
+              h('span', null, label),
+              canSwitch && ex.m ? h('button', { type: 'button', class: 'iconbtn tiny', 'aria-label': 'Switch ' + label + ' for an alternative', onclick: () => switchSheetToday(ex, origId, t, week) }, U.icon('swap', 14)) : null,
+              sw && canSwitch ? h('button', { type: 'button', class: 'iconbtn tiny', 'aria-label': 'Switch back to ' + ex.n, onclick: () => { Store.voidEvent(sw.seq).then(() => root.App.render()); } }, U.icon('undo', 14)) : null),
+            h('span', { class: 'extarget' }, targetTxt)),
+          sw ? h('div', { class: 'muted small' }, 'Switched from ' + ex.n + '.') : null,
           ex.flag ? h('div', { class: 'flag' }, ex.flag) : null,
           setChips(mine, opts, set.liftUnit)));
       }
