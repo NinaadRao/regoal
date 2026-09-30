@@ -31,6 +31,7 @@ Regoal holds sensitive things: body measurements, photos, health-adjacent logs a
 | A hostile own-list file | It is size-limited (15 MB, 30,000 rows), parsed as data, every row range-checked and control characters removed, and shown only as text. Nothing is stored until you confirm, and it is never uploaded or put in a backup. |
 | Personal data in the repository | `.gitignore` plus a pre-commit and pre-push scan for photos, backups, profile files, keys and your own private terms. |
 | Location data in photos | Photos are decoded and re-encoded as JPEG, which drops all metadata. Downloaded comparison images and time-lapse videos are redrawn on a canvas, so they carry none either. |
+| Hostile water entries in a backup | Each entry is rebuilt on load: a valid date and an amount from 0 to 3,000 ml; anything else is skipped. The water tracker is entirely local: no AI, no network call, and its in-app pacing note is not a push notification, since Regoal has no server to send one from. |
 
 ## What is not protected (be honest with yourself)
 

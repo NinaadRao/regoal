@@ -20,6 +20,16 @@ How the bigger features work, in more detail than the README. For installing, se
 
 **Coach.** The coach gets a summary (streaks, active days against your goal, this week's sessions and whether they were done, the last four weeks, a 28-day mix of activities with minutes and estimated calories, your last ten workouts and any moved sessions) so it can spot patterns, such as too little recovery or lifting slipping in a heavy sports week. It never sees workout notes. It can propose logging a workout or moving a session, and you tap Apply like any other change.
 
+## Water
+
+**A goal from your own numbers.** Today has a Water card with a daily goal built from your body weight (about 35 ml per kg) plus extra for the minutes you trained that day (capped so a huge workout doesn't push the goal unreasonably high). There is nothing to configure; the goal recalculates itself each day from your latest weigh-in and that day's logged activity.
+
+**Logging.** Tap one of the quick-add pills for a common amount, or **Log a custom amount** for anything else. Today's entries are listed underneath with a small remove button on each one, and removing an entry (like any other correction in Regoal) voids it rather than deleting your history outright.
+
+**The pacing note is not a push notification.** Regoal has no server, so it cannot send you a real notification once the app or tab is closed — nothing here tries to. Instead, while you have Today open between 7am and 10pm, the card compares what you've logged against an even pace for the time of day and, if you're meaningfully behind, shows a line saying so. Close the app and the nudge is simply gone until you open it again; reaching your goal for the day replaces it with a plain "Goal reached" line. It's a guideline from your weight and training, not medical advice.
+
+**Units.** Water follows the same "Auto" pattern as other measurements: by default it shows ml or fl oz based on whether your body weight is in kg or lb, and you can pin it to one or the other from **Water** in Settings, Units.
+
 ## Goals: several at once, in cycles
 
 The **Goals** tab is where everything you are working towards lives. The switcher at the top reads **All goals** (one card each, with status and this week's target), **Strength and muscle** (your training plan, with the lifts underneath), and every goal you add. Tap the **+** to add one.

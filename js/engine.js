@@ -585,7 +585,7 @@
   function project(events) {
     const voided = new Set();
     for (const e of events) if (e.type === 'event_voided') voided.add(e.data.target);
-    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], moves: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
+    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
     for (const e of events) {
       if (voided.has(e.seq) || e.type === 'event_voided') continue;
       const d = e.data || {};
@@ -598,6 +598,7 @@
         case 'diet_prefs_set': { const r = cleanDietPrefs(d && d.prefs); if (r.ok) s.dietPrefs = r.value; break; }
         case 'plan_revised': if (s.plan) applyRevision(s.plan, d, e); s.revisions.push({ seq: e.seq, ts: e.ts, src: e.src, reason: d.reason, changes: d.changes }); break;
         case 'weight_logged': s.weights.push({ seq: e.seq, date: d.date, kg: d.kg }); break;
+        case 'water_logged': { const date = String(d.date || ''), ml = Number(d.ml); if (validISO(date) && Number.isFinite(ml) && ml > 0 && ml <= 3000) s.water.push({ seq: e.seq, date, ml: clean(ml) }); break; }
         case 'measurement_logged': s.meas.push({ seq: e.seq, date: d.date, site: d.site, cm: d.cm }); break;
         case 'food_logged': s.foods.push(Object.assign({ seq: e.seq }, d)); break;
         case 'set_logged': s.sets.push(Object.assign({ seq: e.seq }, d)); break;
@@ -833,7 +834,7 @@
   }
 
   // ---------- backup / import validation ----------
-  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'event_voided'];
+  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
   const BAD_KEYS = ['__proto__', 'constructor', 'prototype'];
   function hasBadKeys(o, depth) {
     if (o === null || typeof o !== 'object') return false;
@@ -1045,6 +1046,35 @@
   }
   function defaultActiveGoal(profile) { const n = profile && Array.isArray(profile.days) ? profile.days.length : 0; return clamp(n || 4, 1, 7); }
 
+  // ---------- water: a daily goal from body weight and activity, and an in-app pacing nudge ----------
+  // No push notifications (there is no server to send them from): this only tells you, while the app is open,
+  // whether you are behind a simple even pace across the day.
+  const ML_PER_OZ = 29.5735;
+  const WATER_ML_PER_KG = 35; // a common everyday guideline, not medical advice
+  const WATER_ML_PER_ACTIVE_MIN = 12; // extra allowance for sweat lost training, roughly 700 ml an hour
+  const WATER_EXTRA_CAP_ML = 1500;
+  const WATER_WAKE_HOUR = 7, WATER_SLEEP_HOUR = 22; // the window the pace nudge is spread across
+  const volUnitFor = (set) => (set && (set.waterUnit === 'ml' || set.waterUnit === 'oz') ? set.waterUnit : (set && set.bodyUnit === 'lb' ? 'oz' : 'ml'));
+  const mlToUnit = (ml, unit) => (unit === 'oz' ? ml / ML_PER_OZ : ml);
+  const unitToMl = (v, unit) => (unit === 'oz' ? v * ML_PER_OZ : v);
+  function fmtVol(ml, unit) {
+    if (unit === 'oz') return Math.round(mlToUnit(ml, 'oz')) + ' fl oz';
+    return ml >= 1000 ? Math.round(ml / 100) / 10 + ' L' : Math.round(ml) + ' ml';
+  }
+  // Baseline from body weight, plus a capped extra for today's training minutes, rounded to a clean number.
+  function waterGoalMl(state, date) {
+    const kg = bodyKg(state, date);
+    const mins = (state.workouts || []).filter((w) => w.date === date).reduce((t, w) => t + (w.mins || 0), 0);
+    const extra = Math.min(WATER_EXTRA_CAP_ML, mins * WATER_ML_PER_ACTIVE_MIN);
+    return Math.round((kg * WATER_ML_PER_KG + extra) / 50) * 50;
+  }
+  function dayWaterMl(state, date) { return (state.water || []).filter((w) => w.date === date).reduce((t, w) => t + (w.ml || 0), 0); }
+  // How much of the goal "should" be drunk by this hour, on a simple even pace across the waking hours.
+  function waterExpectedMl(goalMl, hour) {
+    const frac = clamp((hour - WATER_WAKE_HOUR) / (WATER_SLEEP_HOUR - WATER_WAKE_HOUR), 0, 1);
+    return Math.round(goalMl * frac);
+  }
+
   // ----- the suggested session for a day. The plan says a weekday; the person can move it. -----
   // Returns { session, planned, moved }: what is on for that date, what the plan had, and whether they differ.
   function sessionFor(plan, moves, date) {
@@ -1226,6 +1256,7 @@
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
     LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST,
     validISO, hasLift, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
+    volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;

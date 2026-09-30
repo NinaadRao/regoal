@@ -294,6 +294,7 @@
       h('div', { class: 'row' }, h('div', { class: 'grow' }, h('div', { class: 'display big' }, U.withCommas(tot.kcal), h('span', { class: 'muted unitbig' }, ' / ' + U.withCommas(plan.kcal) + ' kcal'))), h('div', { class: 'muted' }, tot.n ? Math.round(tot.protein) + ' / ' + plan.protein + ' g protein' : 'Nothing logged')),
       U.bar(plan.kcal ? (tot.kcal / plan.kcal) * 100 : 0, tot.kcal > plan.kcal * 1.1 ? 'coral' : '', true)));
 
+    cards.push(Screens.waterCard(st, set));
     cards.push(weighCard(st, set));
     const tb = timerBar();
     if (tb) cards.push(tb);

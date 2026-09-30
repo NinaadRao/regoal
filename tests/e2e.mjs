@@ -164,6 +164,48 @@ async function main() {
     eq([logged.lift, logged.reps, logged.name], ['acc_face_pulls', 15, 'Face pulls'], 'saved as an ordinary accessory set');
   });
 
+  await step('Water: a goal from body weight, quick-add pills, a custom amount, and removing an entry', async () => {
+    await route(page, '#/today');
+    const card = () => page.locator('section.card', { hasText: 'Water' }).first();
+    await card().waitFor();
+    const goalText = await card().locator('.target-top .muted').innerText();
+    ok(/^Goal \d/.test(goalText), 'shows a computed goal: ' + goalText);
+    const before = await cnt(page, 'water_logged');
+    await card().getByRole('button', { name: '+250 ml' }).click();
+    await page.waitForFunction((n) => Store.getState().water.length > n, before);
+    eq(await page.evaluate(() => Store.getState().water.slice(-1)[0].ml), 250);
+    ok(/250 ml/.test(await card().innerText()), 'the logged total shows 250 ml');
+    // a custom amount, with validation
+    await card().getByRole('button', { name: 'Log a custom amount' }).click();
+    const sh = page.locator('#sheets').last();
+    await sh.getByLabel('Amount', { exact: true }).fill('4000');
+    await sh.getByRole('button', { name: 'Log', exact: true }).click();
+    await page.getByText(/Enter an amount up to/).waitFor();
+    await sh.getByLabel('Amount', { exact: true }).fill('300');
+    const before2 = await page.evaluate(() => Store.getState().water.length);
+    await sh.getByRole('button', { name: 'Log', exact: true }).click();
+    await page.waitForFunction((n) => Store.getState().water.length > n, before2);
+    ok(/550 ml/.test(await card().innerText()), 'total is now 250 + 300 = 550 ml: ' + (await card().innerText()));
+    // remove the 300 ml entry
+    const rows = card().locator('.kv', { hasText: '300 ml' });
+    await rows.first().getByRole('button', { name: 'Remove this entry' }).click();
+    await page.waitForFunction(() => Store.getState().water.reduce((t, w) => t + w.ml, 0) === 250);
+    ok(/250 ml/.test(await card().innerText()) && !/550 ml/.test(await card().innerText()), 'back down to 250 ml after removing the 300 ml entry');
+  });
+
+  await step('Settings: a water unit choice overrides the body-weight fallback', async () => {
+    await route(page, '#/settings');
+    eq(await page.evaluate(() => Engine.volUnitFor(Store.getSettings())), 'ml', 'kg body weight defaults water to ml');
+    const waterSeg = page.locator('.segwrap', { hasText: 'Water' });
+    await waterSeg.getByRole('radio', { name: 'fl oz', exact: true }).click();
+    eq(await page.evaluate(() => Store.getSettings().waterUnit), 'oz');
+    await route(page, '#/today');
+    ok(/fl oz/.test(await page.locator('section.card', { hasText: 'Water' }).first().innerText()), 'the Water card now shows fl oz');
+    await route(page, '#/settings');
+    await waterSeg.getByRole('radio', { name: 'Auto', exact: true }).click();
+    await route(page, '#/today');
+  });
+
   await step('weigh-in logs and reaches Progress', async () => {
     await page.getByLabel('Weigh again').fill('81.6');
     await page.getByRole('button', { name: 'Log', exact: true }).click();

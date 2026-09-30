@@ -359,3 +359,50 @@ test('normalizeLiftSwap: clamps a good suggestion and refuses an unsafe or namel
   assert.equal(clamped.value.reps, 10);
   assert.equal(clamped.value.kg, null, 'a weight over 700 kg is dropped rather than trusted');
 });
+
+// ---------- water: goal, logging and the pacing nudge ----------
+test('waterGoalMl: body weight sets the baseline, and training minutes add a capped extra', () => {
+  const plan = E.buildPlan(answers());
+  const st = E.project([{ seq: 1, ts: 't', type: 'profile_created', data: { profile: { weightKg: 80 }, plan } }]);
+  eqGoal(E.waterGoalMl(st, '2026-01-06'), 80 * 35);
+  const withWorkout = Object.assign({}, st, { workouts: [{ date: '2026-01-06', mins: 45, type: 'strength' }] });
+  eqGoal(E.waterGoalMl(withWorkout, '2026-01-06'), 80 * 35 + 45 * 12);
+  const longWorkout = Object.assign({}, st, { workouts: [{ date: '2026-01-06', mins: 400, type: 'running' }] });
+  eqGoal(E.waterGoalMl(longWorkout, '2026-01-06'), 80 * 35 + 1500, 'the activity extra is capped');
+  function eqGoal(actual, expected, msg) { assert.ok(Math.abs(actual - Math.round(expected / 50) * 50) <= 1, (msg || 'goal') + ': got ' + actual); }
+});
+
+test('dayWaterMl and project(): only today\'s valid entries are counted, voided or malformed ones are dropped', () => {
+  const ev = [
+    { seq: 1, ts: 't', type: 'water_logged', data: { date: '2026-01-06', ml: 250 } },
+    { seq: 2, ts: 't', type: 'water_logged', data: { date: '2026-01-06', ml: 350 } },
+    { seq: 3, ts: 't', type: 'water_logged', data: { date: '2026-01-07', ml: 500 } }, // a different day
+    { seq: 4, ts: 't', type: 'water_logged', data: { date: 'not-a-date', ml: 250 } }, // bad date, dropped
+    { seq: 5, ts: 't', type: 'water_logged', data: { date: '2026-01-06', ml: 999999 } }, // absurd amount, dropped
+    { seq: 6, ts: 't', type: 'event_voided', data: { target: 2 } },
+  ];
+  const s = E.project(ev);
+  assert.equal(s.water.length, 2, JSON.stringify(s.water));
+  assert.equal(E.dayWaterMl(s, '2026-01-06'), 250, 'the voided 350 ml entry does not count');
+  assert.equal(E.dayWaterMl(s, '2026-01-07'), 500);
+  assert.equal(E.dayWaterMl(s, '2026-01-08'), 0);
+});
+
+test('waterExpectedMl: zero before the waking window, the whole goal after, and half at the midpoint', () => {
+  const goal = 3000;
+  assert.equal(E.waterExpectedMl(goal, 6), 0);
+  assert.equal(E.waterExpectedMl(goal, 22), goal);
+  assert.equal(E.waterExpectedMl(goal, 23), goal, 'never goes past the goal');
+  const mid = (E.WATER_WAKE_HOUR + E.WATER_SLEEP_HOUR) / 2;
+  assert.equal(E.waterExpectedMl(goal, mid), Math.round(goal / 2));
+});
+
+test('volUnitFor and fmtVol/mlToUnit/unitToMl: auto follows body weight unit, an explicit choice wins, and formatting round-trips', () => {
+  assert.equal(E.volUnitFor({ bodyUnit: 'kg' }), 'ml');
+  assert.equal(E.volUnitFor({ bodyUnit: 'lb' }), 'oz');
+  assert.equal(E.volUnitFor({ bodyUnit: 'lb', waterUnit: 'ml' }), 'ml', 'an explicit choice overrides the body-weight fallback');
+  assert.equal(E.fmtVol(250, 'ml'), '250 ml');
+  assert.equal(E.fmtVol(1500, 'ml'), '1.5 L');
+  assert.equal(E.fmtVol(500, 'oz'), Math.round(500 / 29.5735) + ' fl oz');
+  assert.ok(Math.abs(E.unitToMl(E.mlToUnit(2000, 'oz'), 'oz') - 2000) < 1);
+});

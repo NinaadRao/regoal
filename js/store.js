@@ -18,7 +18,7 @@
   let settings = null;
 
   const DEFAULT_SETTINGS = {
-    liftUnit: 'lb', bodyUnit: 'kg', lenUnit: 'in', distUnit: 'auto', blurPhotos: true, lockEnabled: false, lockMinutes: 2,
+    liftUnit: 'lb', bodyUnit: 'kg', lenUnit: 'in', distUnit: 'auto', waterUnit: 'auto', blurPhotos: true, lockEnabled: false, lockMinutes: 2,
     reminder: 'weekly', checkinDay: 5, foodDiet: 'auto', encryptBackups: true, includeMediaInBackup: false, lastBackupAt: null,
     coach: { provider: 'anthropic', model: '', baseUrl: '', keyMode: 'device' },
     restTimer: true, logRpe: true, logWarmups: false, logNotes: true,
