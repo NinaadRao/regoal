@@ -142,6 +142,68 @@
   function defaultGain(cls, equip) { return equip === 'bw' ? 0 : cls === 'heavy' ? (equip === 'barbell' ? 0.30 : 0.25) : cls === 'high' ? 0.20 : 0.27; }
   const DEFAULT_LIFT_ORDER = ['flat_db_press', 'incline_db_press', 'shoulder_press', 'lat_pulldown', 'db_row', 'curl', 'leg_press', 'leg_curl', 'leg_ext', 'bulgarian', 'pullups', 'barbell_squat'];
 
+  // ---------- exercise substitution ("Switch") ----------
+  // A short list of common exercises for each muscle group that are not in CATALOG (no weight progression tracked),
+  // used so "Switch" has something to suggest even for template accessories like "Single-arm cable pulldown".
+  const ACCESSORY_POOL = [
+    { n: 'Push-up', m: 'chest', equip: 'bw' }, { n: 'Incline push-up', m: 'chest', equip: 'bw' },
+    { n: 'Resistance band chest press', m: 'chest', equip: 'band' }, { n: 'Dumbbell floor press', m: 'chest', equip: 'db' },
+    { n: 'Inverted row', m: 'back', equip: 'bw' }, { n: 'One-arm dumbbell row', m: 'back', equip: 'db' },
+    { n: 'Resistance band pulldown', m: 'back', equip: 'band' }, { n: 'Straight-arm pulldown', m: 'back', equip: 'machine' },
+    { n: 'Pike push-up', m: 'shoulders', equip: 'bw' }, { n: 'Band lateral raise', m: 'shoulders', equip: 'band' },
+    { n: 'Dumbbell Arnold press', m: 'shoulders', equip: 'db' },
+    { n: 'Band curl', m: 'arms', equip: 'band' }, { n: 'Diamond push-up', m: 'arms', equip: 'bw' },
+    { n: 'Chair dip', m: 'arms', equip: 'bw' }, { n: 'Resistance band pushdown', m: 'arms', equip: 'band' },
+    { n: 'Bodyweight squat', m: 'legs', equip: 'bw' }, { n: 'Walking lunge', m: 'legs', equip: 'db' },
+    { n: 'Step-up', m: 'legs', equip: 'db' }, { n: 'Wall sit', m: 'legs', equip: 'bw' },
+    { n: 'Plank', m: 'core', equip: 'bw' }, { n: 'Bicycle crunch', m: 'core', equip: 'bw' }, { n: 'Band pallof press', m: 'core', equip: 'band' },
+  ];
+  const EQUIP_LIST = ['db', 'machine', 'barbell', 'bw', 'band', 'other'];
+  const EQUIP_HINT = [[/dumbbell|\bdb\b/i, 'db'], [/barbell/i, 'barbell'], [/cable|machine|pulldown|leg press|pec deck|smith/i, 'machine'], [/push-?up|pull-?up|chin-?up|\bdip\b|plank|bodyweight|\bbw\b|hang/i, 'bw']];
+  function guessEquip(name) { for (const [re, eq] of EQUIP_HINT) if (re.test(name)) return eq; return null; }
+  // Rules-based alternatives for one exercise: same muscle group, other exercises from the lift catalog plus
+  // ACCESSORY_POOL, with a different piece of equipment listed first. No network, works offline.
+  // orig: { name, muscle, equip (optional), sets, reps, kg (kg or null), bw }
+  function substituteCandidates(orig) {
+    const wantMuscle = orig && orig.muscle, origSlug = slug((orig && orig.name) || ''), origEquip = (orig && orig.equip) || guessEquip((orig && orig.name) || '');
+    if (!wantMuscle) return [];
+    const seen = new Set([origSlug]);
+    const pool = [];
+    for (const c of Object.values(CATALOG)) {
+      if (c.muscle !== wantMuscle) continue;
+      const s = slug(c.name);
+      if (seen.has(s)) continue;
+      seen.add(s); pool.push({ name: c.name, equip: c.equip });
+    }
+    for (const a of ACCESSORY_POOL) {
+      if (a.m !== wantMuscle) continue;
+      const s = slug(a.n);
+      if (seen.has(s)) continue;
+      seen.add(s); pool.push({ name: a.n, equip: a.equip });
+    }
+    pool.sort((a, b) => (a.equip === origEquip ? 1 : 0) - (b.equip === origEquip ? 1 : 0));
+    const sets = orig.sets > 0 ? Math.round(orig.sets) : 3, reps = orig.reps > 0 ? Math.round(orig.reps) : 10;
+    return pool.slice(0, 6).map((c) => ({ name: c.name, equip: c.equip, bw: c.equip === 'bw', sets, reps, kg: c.equip === 'bw' || orig.bw ? null : (orig.kg == null ? null : orig.kg) }));
+  }
+  // Turns a person's edit or a model's reply into a safe exercise substitution, or explains why not.
+  function normalizeLiftSwap(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, errors: ['That is not an exercise suggestion.'] };
+    if (hasBadKeys(raw, 0)) return { ok: false, errors: ['Unsafe keys were found.'] };
+    const name = cleanStr(raw.name, 60);
+    if (!name) return { ok: false, errors: ['Give the exercise a name.'] };
+    const equip = EQUIP_LIST.includes(raw.equip) ? raw.equip : (guessEquip(name) || 'other');
+    const bw = raw.bw === true || equip === 'bw';
+    let sets = Math.round(Number(raw.sets));
+    if (!Number.isFinite(sets) || sets < 1 || sets > 12) sets = 3;
+    let reps = Math.round(Number(raw.reps));
+    if (!Number.isFinite(reps) || reps < 1 || reps > 100) reps = 10;
+    let kg = null;
+    if (!bw) { const n = Number(raw.kg); if (Number.isFinite(n) && n >= 0 && n <= 700) kg = clean(n); }
+    const assumptions = Array.isArray(raw.assumptions) ? raw.assumptions.slice(0, 6).map((x) => cleanStr(x, 160)).filter(Boolean) : [];
+    const confidence = ['low', 'medium', 'high'].includes(raw.confidence) ? raw.confidence : 'medium';
+    return { ok: true, value: { name, equip, bw, sets, reps, kg, assumptions, confidence } };
+  }
+
   // The block (0 to 4) a week falls in. Blocks are laid out for a 26-week plan; other lengths are stretched or squeezed to fit.
   function blockOfWeek(w, weeks) {
     const n = weeks && weeks !== WEEKS ? Math.ceil((w - 1) * WEEKS / weeks) + 1 : w;
@@ -1162,7 +1224,7 @@
     buildWorkouts, buildPlan, weeklyTargets, validateMacroChange, validateLiftChange, project, avgWeightSeries, latestMeas, setsForWeek,
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
-    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId,
+    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST,
     validISO, hasLift, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };

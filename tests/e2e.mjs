@@ -1120,6 +1120,78 @@ async function main() {
     ok(Math.abs(w2.km - 1.3716) < 0.01, '1,500 yd stored correctly in km: ' + w2.km);
   });
 
+  await step('logging a workout: Switch offers a built-in alternative for an untracked exercise, with the plan carried over', async () => {
+    await route(page, '#/activity');
+    const target = await page.evaluate(() => {
+      for (const w of Store.getState().plan.workouts) {
+        const exx = w.ex.find((e) => !e.lift && e.m);
+        if (exx) return { session: w.name, name: exx.n };
+      }
+      return null;
+    });
+    ok(target, 'the default plan should include at least one untracked accessory exercise');
+    const setsBefore = await page.evaluate(() => Store.getState().sets.length);
+    await page.getByRole('button', { name: 'Log a workout' }).first().click();
+    const sh = page.locator('#sheets > .overlay').first();
+    await sh.getByLabel('Which workout', { exact: true }).selectOption(target.session);
+    const exRow = sh.locator('.exb', { hasText: target.name });
+    await exRow.getByRole('button', { name: 'Switch ' + target.name + ' for an alternative' }).click();
+    const sw = page.locator('#sheets > .overlay').last();
+    await sw.getByText('Switch ' + target.name).waitFor();
+    const cands = sw.locator('.listrow');
+    ok(await cands.count() > 0, 'the built-in list found at least one same-muscle alternative');
+    const candName = await cands.first().locator('b').innerText();
+    await cands.first().click();
+    // The sheet closes on its own; the row now shows the new exercise and where it came from.
+    await exRow.getByText('switched from ' + target.name, { exact: false }).waitFor();
+    const inputs = exRow.locator('input');
+    ok((await inputs.nth(0).inputValue()) !== '', 'sets carried over');
+    ok((await inputs.nth(1).inputValue()) !== '', 'reps carried over');
+    await sh.getByLabel('How long').fill('45');
+    await sh.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction((n) => Store.getState().sets.length > n, setsBefore);
+    const logged = await page.evaluate((n) => Store.getState().sets.filter((s) => s.name && s.name.toLowerCase() === n.toLowerCase()), candName);
+    ok(logged.length > 0, 'a set was logged under the new exercise name, not the original: ' + JSON.stringify(logged));
+  });
+
+  await step('logging a workout: Switch can ask AI for an alternative and a starting weight, shown for confirmation first', async () => {
+    await route(page, '#/activity');
+    const target = await page.evaluate(() => {
+      for (const w of Store.getState().plan.workouts) {
+        const exx = w.ex.find((e) => !e.lift && e.m);
+        if (exx) return { session: w.name, name: exx.n };
+      }
+      return null;
+    });
+    ok(target, 'the default plan should include at least one untracked accessory exercise');
+    await page.evaluate(() => App.setKey('sk-ant-test-0000000000', 'typed'));
+    await page.getByRole('button', { name: 'Log a workout' }).first().click();
+    const sh = page.locator('#sheets > .overlay').first();
+    await sh.getByLabel('Which workout', { exact: true }).selectOption(target.session);
+    const exRow = sh.locator('.exb', { hasText: target.name });
+    await exRow.getByRole('button', { name: 'Switch ' + target.name + ' for an alternative' }).click();
+    const sw = page.locator('#sheets > .overlay').last();
+    await sw.getByRole('button', { name: 'Ask AI to suggest one instead' }).click();
+    await sw.getByLabel('What do you have instead? (optional)').fill('no cable machine, only a resistance band');
+    const reply = { name: 'Resistance band pulldown', equip: 'band', sets: 3, reps: 12, kg: null, assumptions: ['Band tension is not directly comparable to a stack weight'], confidence: 'low' };
+    const seen = await fakeAI(page, async (body) => {
+      ok(JSON.stringify(body).includes('resistance band'), 'the note reaches the model');
+      return { body: textReply(JSON.stringify(reply)) };
+    });
+    await sw.getByRole('button', { name: 'Ask AI', exact: true }).click();
+    await sw.getByText('Band tension is not directly comparable').waitFor();
+    eq(seen.length, 1);
+    eq(await sw.getByLabel('Exercise', { exact: true }).inputValue(), 'Resistance band pulldown');
+    ok(await sw.getByText('Bodyweight').count() > 0, 'a bodyweight toggle is offered');
+    await sw.getByRole('button', { name: 'Use this' }).click();
+    await exRow.getByText('Resistance band pulldown').waitFor();
+    await sh.getByLabel('How long').fill('40');
+    await sh.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction(() => Store.getState().sets.some((s) => s.name === 'Resistance band pulldown'));
+    await page.evaluate(() => App.clearKey());
+    await page.unroute('https://api.anthropic.com/**');
+  });
+
   await step('a new backup always has the same file name so it replaces the old one', async () => {
     await route(page, '#/settings');
     ok(await page.getByText(/Choose a backup folder|This browser cannot delete old backups/).count() >= 1, 'the folder option or the honest note is shown');

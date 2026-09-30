@@ -4,7 +4,7 @@
  */
 (function (root) {
   'use strict';
-  const E = root.Engine, G = root.Goals, U = root.U, UI = root.UI, Store = root.Store;
+  const E = root.Engine, G = root.Goals, U = root.U, UI = root.UI, Store = root.Store, LiftAI = root.LiftAI;
   const { h } = U;
   const Screens = root.Screens = root.Screens || {};
   const { cap, numOrNull } = Screens._;
@@ -137,20 +137,119 @@
     function addRow(spec) {
       if (rows.some((r) => r.id === spec.id)) return;
       const sets = numInp(spec.label + ' sets', spec.target ? spec.target.sets : ''), reps = numInp(spec.label + ' reps', spec.target ? spec.target.reps : '');
-      const kg = spec.bw ? null : numInp(spec.label + ' load', spec.target && spec.target.kg != null ? U.fmtWeight(spec.target.kg, lu, 1) : '', 'decimal');
-      const row = { id: spec.id, label: spec.label, tracked: !!spec.tracked, bw: !!spec.bw, target: spec.target, sets, reps, kg };
-      const el = h('div', { class: 'exb' },
-        h('div', { class: 'exbn' }, h('span', null, spec.label), spec.target ? h('small', { class: 'muted' }, 'Plan ' + spec.target.sets + ' x ' + spec.target.reps + (spec.target.kg == null ? '' : ' @ ' + U.fmtLift(spec.target.kg, lu))) : null,
-          spec.extra ? h('button', { type: 'button', class: 'iconbtn tiny', 'aria-label': 'Remove ' + spec.label, onclick: () => { rows = rows.filter((r) => r !== row); el.remove(); } }, U.icon('x', 14)) : null),
-        h('div', { class: 'exbi' }, sets, h('span', { class: 'x' }, 'x'), reps, ...(spec.bw ? [] : [h('span', { class: 'x' }, '@'), kg, h('span', { class: 'unit' }, lu)])));
+      const kg = numInp(spec.label + ' load', spec.target && spec.target.kg != null ? U.fmtWeight(spec.target.kg, lu, 1) : '', 'decimal');
+      const atSpan = h('span', { class: 'x' }, '@'), unitSpan = h('span', { class: 'unit' }, lu);
+      const row = { id: spec.id, label: spec.label, baseLabel: spec.label, tracked: !!spec.tracked, bw: !!spec.bw, target: spec.target, muscle: spec.m || null, sets, reps, kg };
+      const syncWeightVis = () => { kg.classList.toggle('hidden', row.bw); atSpan.classList.toggle('hidden', row.bw); unitSpan.classList.toggle('hidden', row.bw); if (row.bw) kg.value = ''; };
+      syncWeightVis();
+      const header = h('div', { class: 'exbn' });
+      const el = h('div', { class: 'exb' }, header, h('div', { class: 'exbi' }, sets, h('span', { class: 'x' }, 'x'), reps, atSpan, kg, unitSpan));
+      function syncHeader() {
+        U.clear(header);
+        header.appendChild(h('span', null, row.label));
+        const switched = row.label !== row.baseLabel;
+        const planText = row.target ? 'Plan ' + row.target.sets + ' x ' + row.target.reps + (row.target.kg == null ? '' : ' @ ' + U.fmtLift(row.target.kg, lu)) : '';
+        if (planText || switched) header.appendChild(h('small', { class: 'muted' }, planText + (switched ? (planText ? ' · switched from ' : 'Switched from ') + row.baseLabel : '')));
+        if (row.muscle) header.appendChild(h('button', { type: 'button', class: 'iconbtn tiny', 'aria-label': 'Switch ' + row.label + ' for an alternative', onclick: () => switchSheet(row) }, U.icon('swap', 14)));
+        if (spec.extra) header.appendChild(h('button', { type: 'button', class: 'iconbtn tiny', 'aria-label': 'Remove ' + row.label, onclick: () => { rows = rows.filter((r) => r !== row); el.remove(); } }, U.icon('x', 14)));
+      }
+      row.syncWeightVis = syncWeightVis; row.syncHeader = syncHeader;
+      syncHeader();
       row.el = el; rows.push(row); rowsBox.appendChild(el);
     }
     const specFor = (exx) => {
       const lift = exx.lift ? plan.lifts[exx.lift] : null;
-      if (lift) return { id: lift.id, label: exx.n, tracked: true, bw: !!lift.bw, target: E.liftTarget(lift, weekAt(), E.targetOpts(plan)) };
+      if (lift) return { id: lift.id, label: exx.n, tracked: true, bw: !!lift.bw, target: E.liftTarget(lift, weekAt(), E.targetOpts(plan)), m: lift.muscle };
       const lo = parseInt(exx.range, 10);
-      return { id: 'acc_' + E.slug(exx.n), label: exx.n, tracked: false, bw: false, target: { sets: exx.sets, reps: lo > 0 ? lo : '', kg: null } };
+      return { id: 'acc_' + E.slug(exx.n), label: exx.n, tracked: false, bw: false, target: { sets: exx.sets, reps: lo > 0 ? lo : '', kg: null }, m: exx.m };
     };
+    // Switch one row for an alternative exercise: same muscle group, different equipment. A built-in list works
+    // offline; with an AI key, it can also reason about a starting weight. Nothing is logged until Save.
+    function switchSheet(row) {
+      const orig = { name: row.baseLabel, muscle: row.muscle, sets: (row.target && row.target.sets) || 3, reps: (row.target && row.target.reps) || 10, kg: row.target ? row.target.kg : null, bw: row.bw };
+      const state = { note: '', busy: null, err: '', ai: null };
+      const body = h('div', { class: 'stack' });
+      const uniqueAccId = (name) => {
+        const base = 'acc_' + E.slug(name);
+        let id = base, n = 2;
+        while (rows.some((r) => r !== row && r.id === id)) { id = base + '_' + n; n++; }
+        return id;
+      };
+      const apply = (cand) => {
+        row.id = uniqueAccId(cand.name);
+        row.label = cand.name;
+        row.tracked = false;
+        row.bw = !!cand.bw;
+        row.target = { sets: cand.sets, reps: cand.reps, kg: cand.bw ? null : cand.kg };
+        row.sets.value = cand.sets || '';
+        row.reps.value = cand.reps || '';
+        row.kg.value = !row.bw && cand.kg != null ? U.fmtWeight(cand.kg, lu, 1) : '';
+        row.sets.setAttribute('aria-label', row.label + ' sets'); row.reps.setAttribute('aria-label', row.label + ' reps'); row.kg.setAttribute('aria-label', row.label + ' load');
+        row.syncWeightVis(); row.syncHeader();
+        U.toast('Switched to ' + cand.name + '.');
+        close();
+      };
+      function drawRules() {
+        const cands = E.substituteCandidates(orig);
+        const kids = [h('div', { class: 'muted small' }, 'Same muscle group (' + cap(row.muscle) + '), different equipment. Starting numbers carry over from ' + row.baseLabel + ' — adjust once you feel it out.')];
+        if (!cands.length) kids.push(h('div', { class: 'muted' }, 'No built-in alternative for this one yet. Try Ask AI, or enter your own numbers after picking "Something else" above.'));
+        for (const c of cands) {
+          kids.push(h('button', { type: 'button', class: 'listrow', onclick: () => apply(c) },
+            h('div', { class: 'grow' }, h('b', null, c.name), h('span', { class: 'muted small' }, c.sets + ' x ' + c.reps + (c.bw ? ' (bodyweight)' : c.kg != null ? ' @ ' + U.fmtLift(c.kg, lu) : ''))),
+            U.icon('chev', 16)));
+        }
+        if (root.App.aiReady()) kids.push(UI.btn('Ask AI to suggest one instead', { kind: 'quiet', onClick: () => { state.err = ''; drawAiForm(); } }));
+        else kids.push(h('div', { class: 'muted small' }, 'Add your own AI key in Coach settings and it can also reason about a starting weight, not just pick from this list.'));
+        U.put(U.clear(body), ...kids);
+      }
+      function drawAiForm() {
+        const cfg = root.App.llmConfig();
+        let host = ''; try { host = new URL(root.LLM.endpointOf(cfg)).host; } catch (e) { host = 'your provider'; }
+        const nf = UI.field({ label: 'What do you have instead? (optional)', value: state.note, maxlength: 120, placeholder: 'no cable machine, only dumbbells...', onInput: (v) => { state.note = v; } });
+        const errBox = state.err ? h('div', { class: 'warnbox', role: 'alert' }, state.err) : null;
+        const go = h('button', { type: 'button', class: 'btn primary block' }, state.busy ? 'Stop' : 'Ask AI');
+        if (state.busy) go.insertBefore(h('span', { class: 'spin' }), go.firstChild);
+        go.addEventListener('click', async () => {
+          if (state.busy) { state.busy.abort(); return; }
+          const ctl = new AbortController();
+          state.busy = ctl; state.err = ''; drawAiForm();
+          try {
+            const r = await LiftAI.substitute(cfg, { name: row.baseLabel, muscle: row.muscle, sets: orig.sets, reps: orig.reps, kg: orig.kg, bw: orig.bw, note: state.note, signal: ctl.signal });
+            if (state.busy !== ctl) return;
+            state.busy = null; state.ai = r; drawAiConfirm();
+          } catch (e) {
+            if (state.busy !== ctl) return;
+            state.busy = null;
+            state.err = e && e.name === 'AbortError' ? 'Stopped.' : String(e && e.message ? e.message : e).slice(0, 300);
+            drawAiForm();
+          }
+        });
+        U.put(U.clear(body), nf, h('div', { class: 'muted small' }, 'Sends the exercise name, muscle group, current plan and this note (if any) to ' + host + ' with your key. Nothing changes until you confirm.'),
+          errBox, go, UI.btn('Use a built-in alternative instead', { kind: 'quiet', onClick: drawRules }));
+      }
+      function drawAiConfirm() {
+        const v = state.ai.value;
+        const name = UI.field({ label: 'Exercise', value: v.name, maxlength: 60 });
+        const setsF = UI.field({ label: 'Sets', type: 'number', value: v.sets, flex: 1 });
+        const repsF = UI.field({ label: 'Reps', type: 'number', value: v.reps, flex: 1 });
+        const kgF = UI.field({ label: 'Starting weight', unit: lu, type: 'number', value: v.kg == null ? '' : U.fmtWeight(v.kg, lu, 1), flex: 1 });
+        kgF.classList.toggle('hidden', v.bw);
+        const bwToggle = UI.toggleRow('Bodyweight', 'No added weight.', v.bw, (on) => { v.bw = on; kgF.classList.toggle('hidden', on); });
+        const okBtn = h('button', { type: 'button', class: 'btn primary block' }, 'Use this');
+        okBtn.addEventListener('click', () => {
+          const bw = v.bw, kgVal = bw ? null : U.unitToKg(numOrNull(kgF.input.value) || 0, lu);
+          const chk = E.normalizeLiftSwap({ name: name.input.value, equip: bw ? 'bw' : v.equip, bw, sets: numOrNull(setsF.input.value), reps: numOrNull(repsF.input.value), kg: bw ? null : kgVal });
+          if (!chk.ok) return U.toast(chk.errors[0], 'warn');
+          apply(chk.value);
+        });
+        const kids = [name, UI.row(setsF, repsF), bwToggle, kgF];
+        if (v.assumptions.length) kids.push(h('ul', { class: 'assume' }, ...v.assumptions.map((a) => h('li', null, a))));
+        kids.push(okBtn, h('div', { class: 'row' }, UI.btn('Ask again', { kind: 'quiet', onClick: drawAiForm }), UI.btn('Use a built-in alternative instead', { kind: 'quiet', onClick: drawRules })));
+        U.put(U.clear(body), ...kids);
+      }
+      drawRules();
+      const close = U.sheet('Switch ' + row.baseLabel, body, [{ label: 'Cancel' }]);
+    }
     function buildRows() {
       U.clear(rowsBox); rows = [];
       const s = plan.workouts.find((w) => w.name === sessSel.value);
@@ -164,7 +263,7 @@
     } }, 'Fill with the plan');
     // Add an exercise that is not in the list
     const known = [];
-    for (const l of Object.values(plan.lifts)) known.push({ key: l.id, label: l.name, spec: () => ({ id: l.id, label: l.name, tracked: true, bw: !!l.bw, target: E.liftTarget(l, weekAt(), E.targetOpts(plan)), extra: true }) });
+    for (const l of Object.values(plan.lifts)) known.push({ key: l.id, label: l.name, spec: () => ({ id: l.id, label: l.name, tracked: true, bw: !!l.bw, target: E.liftTarget(l, weekAt(), E.targetOpts(plan)), m: l.muscle, extra: true }) });
     for (const w of plan.workouts) for (const exx of w.ex) if (!exx.lift && !known.some((k) => k.label === exx.n)) known.push({ key: 'acc_' + E.slug(exx.n), label: exx.n, spec: () => Object.assign(specFor(exx), { extra: true }) });
     const addSel = h('select', { class: 'inp', 'aria-label': 'Add an exercise' }, h('option', { value: '' }, 'Add an exercise'), ...known.map((k) => h('option', { value: k.key }, k.label)), h('option', { value: '__own' }, 'Something else…'));
     const ownF = UI.field({ label: 'Exercise name', maxlength: 30 });

@@ -309,3 +309,53 @@ test('clips come back from the event log, and a replaced or voided entry disappe
   assert.equal(s.clips.length, 1);
   assert.equal(s.clips[0].note, 'edited');
 });
+
+// ---------- exercise substitution ("Switch") ----------
+test('substituteCandidates: same muscle group, prefers different equipment, carries over sets/reps/weight', () => {
+  const orig = { name: 'Single-arm cable pulldown', muscle: 'back', equip: 'machine', sets: 3, reps: 10, kg: 40, bw: false };
+  const cands = E.substituteCandidates(orig);
+  assert.ok(cands.length > 0);
+  for (const c of cands) {
+    assert.notEqual(c.name.toLowerCase(), orig.name.toLowerCase());
+    assert.equal(c.sets, 3);
+    assert.equal(c.reps, 10);
+    if (c.bw) assert.equal(c.kg, null);
+    else assert.equal(c.kg, 40);
+  }
+  // Machine alternatives (same equipment as the one being avoided) should sort after non-machine ones.
+  const firstMachineIdx = cands.findIndex((c) => c.equip === 'machine');
+  const firstOtherIdx = cands.findIndex((c) => c.equip !== 'machine');
+  if (firstMachineIdx >= 0 && firstOtherIdx >= 0) assert.ok(firstOtherIdx < firstMachineIdx);
+});
+
+test('substituteCandidates: a bodyweight original never gets a suggested weight, and an unknown muscle gets nothing', () => {
+  const cands = E.substituteCandidates({ name: 'Pull-ups', muscle: 'back', sets: 3, reps: 8, kg: null, bw: true });
+  assert.ok(cands.length > 0);
+  for (const c of cands) assert.equal(c.kg, null);
+  assert.deepEqual(E.substituteCandidates({ name: 'Mystery move', muscle: null, sets: 3, reps: 10, kg: 20, bw: false }), []);
+});
+
+test('normalizeLiftSwap: clamps a good suggestion and refuses an unsafe or nameless one', () => {
+  const r = E.normalizeLiftSwap({ name: 'One-arm dumbbell row', equip: 'db', sets: 3.6, reps: 10.2, kg: 22.5, assumptions: ['Roughly similar load per side'], confidence: 'medium' });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.name, 'One-arm dumbbell row');
+  assert.equal(r.value.sets, 4);
+  assert.equal(r.value.reps, 10);
+  assert.equal(r.value.kg, 22.5);
+  assert.equal(r.value.bw, false);
+
+  const bw = E.normalizeLiftSwap({ name: 'Inverted row', equip: 'bw', sets: 3, reps: 12, kg: 999 });
+  assert.equal(bw.ok, true);
+  assert.equal(bw.value.bw, true);
+  assert.equal(bw.value.kg, null, 'bodyweight ignores any kg the model sent');
+
+  assert.equal(E.normalizeLiftSwap({ name: '', sets: 3, reps: 10 }).ok, false);
+  assert.equal(E.normalizeLiftSwap(null).ok, false);
+  assert.equal(E.normalizeLiftSwap(JSON.parse('{"name":"x","__proto__":{"polluted":true}}')).ok, false);
+  // Out-of-range numbers fall back to sane defaults rather than failing the whole suggestion.
+  const clamped = E.normalizeLiftSwap({ name: 'Leg press', sets: 0, reps: 999, kg: 5000 });
+  assert.equal(clamped.ok, true);
+  assert.equal(clamped.value.sets, 3);
+  assert.equal(clamped.value.reps, 10);
+  assert.equal(clamped.value.kg, null, 'a weight over 700 kg is dropped rather than trusted');
+});
