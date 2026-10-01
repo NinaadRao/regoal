@@ -4,7 +4,7 @@
  * your data lives in IndexedDB, which this file cannot read.
  */
 'use strict';
-const CACHE = 'regoal-shell-v17';
+const CACHE = 'regoal-shell-v18';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/engine.js', 'js/diet.js', 'js/goals.js', 'js/util.js', 'js/crypto.js', 'js/store.js', 'js/llm.js', 'js/foods.js', 'js/foodai.js', 'js/liftai.js', 'js/coach.js', 'js/ui.js',

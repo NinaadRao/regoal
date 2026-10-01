@@ -126,6 +126,20 @@ test('amounts scale from per 100 g', () => {
   assert.deepEqual(Foods.scale({ kcal: 100, protein: 10, carbs: 10, fat: 1 }, 0), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
 });
 
+test('recents: carries an AI entry\'s ingredient breakdown forward, so reusing it does not lose it', () => {
+  const ai = { items: [{ name: 'Rajma, cooked', qty: '1 cup', kcal: 225, protein: 15, carbs: 40, fat: 1 }], assumptions: ['One cup'], confidence: 'medium' };
+  const foods = [
+    { seq: 1, name: 'Plain rice', kcal: 200, protein: 4, carbs: 45, fat: 0, meal: 'Lunch' },
+    { seq: 2, name: 'Rajma chawal', kcal: 430, protein: 19, carbs: 85, fat: 1, meal: 'Lunch', ai },
+  ];
+  const r = Foods.recents(foods, 6);
+  const rajma = r.find((f) => f.name === 'Rajma chawal');
+  assert.ok(rajma, 'the AI entry is in recents');
+  assert.deepEqual(rajma.ai, ai, 'its ingredient breakdown comes along, unchanged');
+  const plain = r.find((f) => f.name === 'Plain rice');
+  assert.equal(plain.ai, null, 'an entry logged without AI has no breakdown to carry');
+});
+
 test('the loader fetches once and keeps the result', async () => {
   let calls = 0;
   const fetcher = () => { calls++; return Promise.resolve({ ok: true, json: () => Promise.resolve(raw) }); };

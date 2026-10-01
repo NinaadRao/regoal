@@ -232,7 +232,7 @@
       const k = String(f.name || '').toLowerCase();
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      out.push({ id: 'r' + f.seq, name: f.name, serving: f.serving || 'as logged', kcal: f.kcal, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, recent: true, meal: f.meal, diet: 0 });
+      out.push({ id: 'r' + f.seq, name: f.name, serving: f.serving || 'as logged', kcal: f.kcal, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, recent: true, meal: f.meal, diet: 0, ai: f.ai || null });
     }
     return out;
   }

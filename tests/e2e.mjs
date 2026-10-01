@@ -470,6 +470,32 @@ async function main() {
     ok(await page.locator('.chip', { hasText: 'AI, edited' }).count() >= 1, 'AI chip visible in the log');
   });
 
+  await step('Fuel: editing an AI-estimated entry shows how it was worked out, and reusing it from Find carries that forward', async () => {
+    await page.getByRole('button', { name: 'Edit Rajma chawal' }).first().click();
+    const sheet = page.locator('#sheets').last();
+    await sheet.getByText('How it was worked out').waitFor();
+    const rows = sheet.locator('.itemrow');
+    eq(await rows.count(), 2, 'both ingredient line items are shown');
+    ok(/Rajma, cooked/.test(await rows.nth(0).innerText()) && /225 kcal/.test(await rows.nth(0).innerText()), 'first ingredient and its calories: ' + (await rows.nth(0).innerText()));
+    ok(/Rice, cooked/.test(await rows.nth(1).innerText()), 'second ingredient');
+    ok(/does not rescale/.test(await sheet.innerText()), 'a caption clarifies this is the original estimate');
+    await page.keyboard.press('Escape'); // editSheet has no Cancel action; Escape dismisses it
+    // Reuse it from Find: the ingredient breakdown should carry over to the new entry too, not just the macros.
+    const before2 = await page.evaluate(() => Store.getState().foods.length);
+    await page.getByRole('button', { name: 'Add food' }).click();
+    const addSheet = page.locator('#sheets').last();
+    await addSheet.getByRole('tab', { name: 'Find' }).click();
+    await addSheet.locator('.result', { hasText: 'Rajma chawal' }).first().click();
+    await addSheet.getByRole('button', { name: 'Log it' }).click();
+    await page.waitForFunction((n) => Store.getState().foods.length > n, before2);
+    const logged = await page.evaluate(() => Store.getState().foods.slice(-1)[0]);
+    ok(logged.ai && Array.isArray(logged.ai.items) && logged.ai.items.length === 2, 'the reused entry keeps the original ingredient breakdown: ' + JSON.stringify(logged.ai));
+    await page.getByRole('button', { name: 'Edit Rajma chawal' }).last().click();
+    await sheet.getByText('How it was worked out').waitFor();
+    eq(await sheet.locator('.itemrow').count(), 2, 'and it shows again on the reused entry');
+    await page.keyboard.press('Escape');
+  });
+
   await step('Fuel: a food photo is analyzed for macros with no text typed, and shows in the confirmation', async () => {
     const reply = { name: 'Grilled chicken salad', items: [{ name: 'Chicken breast', qty: '150 g', kcal: 250, protein: 45, carbs: 0, fat: 6 }, { name: 'Mixed greens', qty: '1 bowl', kcal: 30, protein: 2, carbs: 5, fat: 0 }], kcal: 280, protein: 47, carbs: 5, fat: 6, assumptions: ['Portion judged from the plate in the photo'], confidence: 'medium' };
     await page.unroute('https://api.anthropic.com/**');

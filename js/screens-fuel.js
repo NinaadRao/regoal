@@ -127,9 +127,16 @@
       ? h('div', { class: 'pills' }, ...[50, 100, 150, 200, 250].map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(g); amtField.input.value = amount; updLive(); } }, g + ' g')))
       : h('div', { class: 'pills' }, ...[0.5, 1, 1.5, 2].map((x) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(x); amtField.input.value = amount; updLive(); } }, x + 'x')));
     updLive();
+    const aiItems = f.ai && f.ai.items && f.ai.items.length
+      ? h('div', { class: 'stack' },
+          h('div', { class: 'lab' }, 'How it was worked out'),
+          h('div', null, ...f.ai.items.map((it) => h('div', { class: 'itemrow' }, h('span', null, it.name), h('b', null, it.kcal + ' kcal'), h('small', null, (it.qty ? it.qty + ' · ' : '') + macroLine(it))))),
+          h('div', { class: 'muted small' }, 'From the original estimate. It does not rescale if you change the portion above.'))
+      : null;
     const body = h('div', { class: 'stack' }, name, amtField, quick, live,
       h('div', { class: 'muted small' }, isGrams ? 'Weigh the amount you actually had; calories and macros scale from it.' : 'Ate more or less than logged? Adjust the portion; calories and macros scale from it.'),
       UI.pills({ label: 'Meal', items: E.MEALS, values: new Set([meal]), multi: false, onChange: (v) => { meal = Array.from(v)[0]; } }),
+      aiItems,
       f.ai && f.ai.assumptions && f.ai.assumptions.length ? h('ul', { class: 'assume' }, ...f.ai.assumptions.map((a) => h('li', null, a))) : null);
     U.sheet('Edit food', body, [{ label: 'Delete', kind: 'danger', run: async () => { await Store.voidEvent(f.seq); root.App.render(); } }, { label: 'Save', kind: 'primary', run: () => {
       const amt = numOrNull(amount);
@@ -235,7 +242,7 @@
           if (!(n > 0 && n <= 20)) return U.toast('Servings must be between 0 and 20.', 'warn');
           const r = E.normalizeFood({ name: f.name, kcal: f.kcal * n, protein: f.protein * n, carbs: f.carbs * n, fat: f.fat * n });
           if (!r.ok) return U.toast(r.errors[0], 'warn');
-          await saveFood(date, meal, r.value, { serving: n === 1 ? f.serving : U.num(n, 2) + ' x ' + f.serving, source: f.recent ? 'recent' : 'catalog', portion: { unit: 'x', amount: n, label: f.serving, base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } } });
+          await saveFood(date, meal, r.value, Object.assign({ serving: n === 1 ? f.serving : U.num(n, 2) + ' x ' + f.serving, source: f.recent ? 'recent' : 'catalog', portion: { unit: 'x', amount: n, label: f.serving, base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } } }, f.ai ? { ai: f.ai } : {}));
           finish();
         } })));
     }
