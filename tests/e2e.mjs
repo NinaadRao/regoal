@@ -1743,6 +1743,33 @@ async function main() {
     ok(r.diffStill, 'the time-lapse frame (same cover() path) also reflects it');
   });
 
+  await step('the exported crop pans the same direction as the live on-screen alignment', async () => {
+    // The live preview pans by setting a CSS transform directly on the photo (translate(dx%, dy%)): positive
+    // dx/dy slide the photo itself right/down, which brings the photo's opposite (left/top) edge into view.
+    // cover() used to move the crop window the same direction as dx/dy instead of the opposite one, so a
+    // pan that showed (say) the top-left of a photo on screen saved a file showing the bottom-right instead.
+    // Regression test: build a 4-quadrant photo, pan right+down (positive dx/dy), and check the exported
+    // crop is centred on the top-left quadrant, matching what that pan shows live.
+    const corner = await tpage.evaluate(async () => {
+      const c = document.createElement('canvas'); c.width = 600; c.height = 800; const x = c.getContext('2d');
+      x.fillStyle = '#ff0000'; x.fillRect(0, 0, 300, 400);    // top-left: red
+      x.fillStyle = '#00ff00'; x.fillRect(300, 0, 300, 400);  // top-right: green
+      x.fillStyle = '#0000ff'; x.fillRect(0, 400, 300, 400);  // bottom-left: blue
+      x.fillStyle = '#ffff00'; x.fillRect(300, 400, 300, 400); // bottom-right: yellow
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      const align = { dx: 0.345, dy: 0.43, scale: 1.322 }; // pan right + down, zoomed in
+      const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align }, b: { blob, label: 'B', align: { dx: 0, dy: 0, scale: 1 } }, layout: 'side', format: 'png', labels: false, rows: null, head: ['', ''] });
+      const url = URL.createObjectURL(out);
+      const img = new Image(); img.src = url; await new Promise((r) => { img.onload = r; });
+      const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const px = cx.getImageData(Math.floor(img.naturalWidth * 0.25), Math.floor(img.naturalHeight * 0.5), 1, 1).data;
+      return [px[0], px[1], px[2]];
+    });
+    eq(corner, [255, 0, 0], 'center of the Before cell should land in the top-left (red) quadrant, same as the live CSS pan shows, not the opposite bottom-right (yellow) corner');
+  });
+
   await step('a pan saved right at the edge with no zoom still draws the photo, not a blank frame', async () => {
     // dx: 1 at scale: 1 used to put the crop rectangle fully outside the source photo (zero overlap), so
     // that one frame came out as plain background instead of the picture: regression test for that bug.

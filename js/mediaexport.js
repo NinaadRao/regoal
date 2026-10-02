@@ -46,8 +46,11 @@
     const d = dims(im), k = Math.max(w / d.w, hh / d.h), sw = w / k, sh = hh / k;
     const a = align || { dx: 0, dy: 0, scale: 1 }, scale = a.scale || 1;
     const cw = Math.min(sw / scale, d.w), ch = Math.min(sh / scale, d.h);
-    const cx = Math.min(Math.max(d.w / 2 + a.dx * cw, cw / 2), d.w - cw / 2);
-    const cy = Math.min(Math.max(d.h / 2 + a.dy * ch, ch / 2), d.h - ch / 2);
+    // Live preview pans with a CSS transform on the photo itself (translate(dx%, dy%)), so positive dx/dy
+    // slide the photo right/down, which brings the opposite edge (left/top) of the source into view at the
+    // box's center. The crop center here has to move the opposite way to match: subtract, not add.
+    const cx = Math.min(Math.max(d.w / 2 - a.dx * cw, cw / 2), d.w - cw / 2);
+    const cy = Math.min(Math.max(d.h / 2 - a.dy * ch, ch / 2), d.h - ch / 2);
     ctx.save();
     if (alpha != null) ctx.globalAlpha = alpha;
     ctx.beginPath(); ctx.rect(x, y, w, hh); ctx.clip();
