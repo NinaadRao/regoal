@@ -39,11 +39,15 @@
   // align: an optional saved { dx, dy, scale } (see Engine.photoAlignFor) — the same manual or AI-suggested
   // pan/zoom the live preview applies with a CSS transform, reproduced here in source-pixel terms so a
   // downloaded image or time-lapse matches what was actually lined up on screen, not just an auto-centred crop.
+  // The crop rectangle is pinned so it never falls outside the source photo: a pan saved close to the
+  // allowed edge (especially with little or no zoom) would otherwise land fully off the image and draw
+  // nothing at all, leaving that one photo blank in a download or time-lapse frame.
   function cover(ctx, im, x, y, w, hh, alpha, align) {
     const d = dims(im), k = Math.max(w / d.w, hh / d.h), sw = w / k, sh = hh / k;
     const a = align || { dx: 0, dy: 0, scale: 1 }, scale = a.scale || 1;
-    const cw = sw / scale, ch = sh / scale;
-    const cx = d.w / 2 + a.dx * cw, cy = d.h / 2 + a.dy * ch;
+    const cw = Math.min(sw / scale, d.w), ch = Math.min(sh / scale, d.h);
+    const cx = Math.min(Math.max(d.w / 2 + a.dx * cw, cw / 2), d.w - cw / 2);
+    const cy = Math.min(Math.max(d.h / 2 + a.dy * ch, ch / 2), d.h - ch / 2);
     ctx.save();
     if (alpha != null) ctx.globalAlpha = alpha;
     ctx.beginPath(); ctx.rect(x, y, w, hh); ctx.clip();

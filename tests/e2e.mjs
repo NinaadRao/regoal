@@ -1743,6 +1743,22 @@ async function main() {
     ok(r.diffStill, 'the time-lapse frame (same cover() path) also reflects it');
   });
 
+  await step('a pan saved right at the edge with no zoom still draws the photo, not a blank frame', async () => {
+    // dx: 1 at scale: 1 used to put the crop rectangle fully outside the source photo (zero overlap), so
+    // that one frame came out as plain background instead of the picture: regression test for that bug.
+    const frac = await tpage.evaluate(async () => {
+      const st = Store.getState(), cis = Engine.checkIns(st, 'Front').filter((c) => c.photo);
+      const blob = (await Store.getMedia(cis[0].photo.id)).blob;
+      const cv = await MediaOut.stillFrame({ frames: [{ blob, title: '', numbers: '', align: { dx: 1, dy: 0, scale: 1 } }], shape: 'square', labels: false, numbers: false }, 0, 1);
+      const data = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      const bg = MediaOut._.C.chalk, br = parseInt(bg.slice(1, 3), 16), bgg = parseInt(bg.slice(3, 5), 16), bb = parseInt(bg.slice(5, 7), 16);
+      let bgCount = 0, total = 0;
+      for (let i = 0; i < data.length; i += 4) { total++; if (Math.abs(data[i] - br) < 4 && Math.abs(data[i + 1] - bgg) < 4 && Math.abs(data[i + 2] - bb) < 4) bgCount++; }
+      return bgCount / total;
+    });
+    ok(frac < 0.5, 'mostly photo pixels, not the plain background: ' + (frac * 100).toFixed(1) + '% background');
+  });
+
   await step('download time-lapse: warning, real video from the photos, cancel leaves nothing behind', async () => {
     if (!await tpage.evaluate(() => !!MediaOut.pickVideoMime())) { console.log('       (this browser cannot record MP4; skipped)'); return; }
     await route(tpage, '#/photos/trend');
