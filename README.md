@@ -70,6 +70,7 @@ A private, local-first tracker for lifts, workouts and sport, food, body weight,
 - Track as many lifts as you like: about 40 are built in, and you can add your own (name, muscle, equipment, starting weight) and choose which workout it goes on. Stop tracking one any time; its history stays.
 - Today shows the day's workout as a suggestion. Move it to another day, swap it with another session, train something else, or skip it for the week. Weekly targets do not depend on the weekday, and a moved session is never counted as missed.
 - Did more than the plan called for? **+ Add an exercise** on Today logs any catalog lift or a name you type, for just that day. It never changes your ongoing plan, and it works on rest days too.
+- Forgot to log a day? Tap the date under "Today" to step to another day (or pick one) anywhere from your plan's start up to today, and log or edit that day's sets and weigh-in exactly as if it were today.
 
 **Activity**
 - Log any workout by hand: swimming, football, tennis, badminton, pickleball, hot yoga, running, cycling and about twenty more, or your own. Pick the time and how hard it was.

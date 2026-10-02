@@ -13,6 +13,25 @@
   // ---------- rest timer (lives outside the page so re-rendering does not reset it) ----------
   let timer = null; // { end, total, label }
   let tickId = null;
+
+  // ---------- Today's viewed date: null means "today"; otherwise an ISO date within the plan, up to today ----------
+  let viewedDate = null;
+  function dateSheet(cur, today, startDate) {
+    const inp = UI.field({ label: 'Date', type: 'date', value: cur, min: startDate, max: today });
+    const prevDay = E.addDays(cur, -1), nextDay = E.addDays(cur, 1);
+    const stepRow = h('div', { class: 'row' },
+      UI.btn('← Previous day', { kind: 'quiet', block: false, disabled: cur <= startDate, onClick: () => { viewedDate = prevDay; close(); root.App.render(); } }),
+      UI.btn('Next day →', { kind: 'quiet', block: false, disabled: cur >= today, onClick: () => { viewedDate = nextDay; close(); root.App.render(); } }));
+    const body = h('div', { class: 'stack' }, stepRow, inp, h('div', { class: 'muted small' }, 'You can log, edit or review anything on the date you pick, the same as today.'));
+    const actions = [{ label: 'Cancel' }];
+    if (cur !== today) actions.push({ label: 'Back to today', kind: 'quiet', run: () => { viewedDate = null; root.App.render(); } });
+    actions.push({ label: 'Go', kind: 'primary', run: () => {
+      const d = inp.input.value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d < startDate || d > today) { U.toast('Pick a date within your plan.', 'warn'); return false; }
+      viewedDate = d === today ? null : d; root.App.render();
+    } });
+    const close = U.sheet('Jump to a date', body, actions);
+  }
   function startTimer(sec, label) {
     timer = { end: Date.now() + sec * 1000, total: sec, label: label || '' };
     if (!tickId) tickId = setInterval(tick, 500);
@@ -90,14 +109,15 @@
   }
 
   // ---------- weigh-in ----------
-  function weighCard(st, set) {
-    const t = U.today();
+  function weighCard(st, set, t) {
+    const today = U.today();
     const todays = st.weights.filter((w) => w.date === t);
     const last = st.weights.length ? st.weights[st.weights.length - 1] : null;
-    const inp = UI.field({ label: todays.length ? 'Weigh again' : 'Morning weight', unit: set.bodyUnit, type: 'number', flex: 1, placeholder: last ? U.fmtWeight(last.kg, set.bodyUnit) : '' });
+    const onToday = t === today;
+    const inp = UI.field({ label: todays.length ? 'Weigh again' : (onToday ? 'Morning weight' : 'Weight for this date'), unit: set.bodyUnit, type: 'number', flex: 1, placeholder: last ? U.fmtWeight(last.kg, set.bodyUnit) : '' });
     return UI.card(
       h('div', { class: 'ct' }, 'Weigh-in'),
-      todays.length ? h('div', { class: 'muted' }, 'Logged today: ' + todays.map((w) => U.fmtWeight(w.kg, set.bodyUnit) + ' ' + set.bodyUnit).join(', ')) : h('div', { class: 'muted small' }, 'Same time, same conditions. Regoal uses a 7-day average so one bad morning does not matter.'),
+      todays.length ? h('div', { class: 'muted' }, (onToday ? 'Logged today: ' : 'Logged for ' + U.shortDate(t) + ': ') + todays.map((w) => U.fmtWeight(w.kg, set.bodyUnit) + ' ' + set.bodyUnit).join(', ')) : h('div', { class: 'muted small' }, onToday ? 'Same time, same conditions. Regoal uses a 7-day average so one bad morning does not matter.' : 'Logging for ' + U.longDate(t) + '.'),
       UI.row(inp, UI.btn('Log', { block: false, onClick: async () => {
         const v = numOrNull(inp.input.value);
         const kg = v == null ? null : U.unitToKg(v, set.bodyUnit);
@@ -243,7 +263,10 @@
   // ---------- Today ----------
   Screens.today = function () {
     const st = Store.getState(), plan = st.plan, set = Store.getSettings();
-    const t = U.today();
+    const today = U.today();
+    if (viewedDate != null && (viewedDate < plan.startDate || viewedDate > today)) viewedDate = null;
+    const t = viewedDate || today;
+    const onToday = t === today;
     const rawWeek = E.weekOf(plan.startDate, t);
     const week = E.clamp(rawWeek, 1, E.planWeeks(plan));
     const deload = plan.deloadWeeks.includes(week);
@@ -259,16 +282,16 @@
     cards.push(UI.card(h('div', { class: 'todayhead' }, ring, h('div', { class: 'grow' },
       h('div', { class: 'display big2' }, 'Week ' + week + ' of ' + E.planWeeks(plan)),
       h('div', { class: 'muted' }, cap(plan.goal) + ' · ' + U.withCommas(plan.kcal) + ' kcal · ' + plan.protein + ' g protein'),
-      h('div', { class: 'row' }, deload ? U.chip('Deload week: 2 easier sets', 'good') : null, ci ? U.chip(ci.status === 'done' ? 'Check-in done' : ci.status === 'due' ? 'Check-in today' : 'Check-in ' + U.DOW[set.checkinDay], ci.status === 'done' ? 'good' : 'acc') : null)))));
+      h('div', { class: 'row' }, deload ? U.chip('Deload week: 2 easier sets', 'good') : null, ci ? U.chip(ci.status === 'done' ? 'Check-in done' : ci.status === 'due' ? (onToday ? 'Check-in today' : 'Check-in day') : 'Check-in ' + U.DOW[set.checkinDay], ci.status === 'done' ? 'good' : 'acc') : null)))));
 
     if (rawWeek > E.planWeeks(plan)) cards.push(UI.cardX('good', h('div', { class: 'ct' }, 'You finished all ' + E.planWeeks(plan) + ' weeks'), h('div', { class: 'muted' }, 'Take your final photos and measurements, then compare against week 1 in Progress. Your logs stay here as long as you keep the app.'), UI.row(UI.btn('Extend the plan', { onClick: Screens.planLengthSheet }), UI.btn('See progress', { kind: 'quiet', href: '#/progress' }))));
 
     const cp = E.checkpoint(st, t);
     if (cp) cards.push(UI.cardX('acc', h('div', { class: 'ct' }, 'Checkpoint · week ' + cp.week), h('div', null, cp.text), UI.row(UI.btn('Review goal', { kind: 'primary', onClick: () => switchGoalSheet(cp.goal, cp.text, 'checkpoint') }))));
 
-    // Monthly review: rules only, every number has a sentence behind it.
+    // Monthly review: rules only, every number has a sentence behind it. Only on the real today: it is about the present, not a day you are looking back at.
     const monthNo = Math.floor(week / 4);
-    if (week >= 4 && (set.reviewSeen || 0) < monthNo) {
+    if (onToday && week >= 4 && (set.reviewSeen || 0) < monthNo) {
       const rev = E.reviewMonth(st, t);
       cards.push(UI.card(h('div', { class: 'ct' }, 'Monthly check-in'), h('div', null, rev.message),
         rev.perWeek != null ? h('div', { class: 'muted small' }, 'Weight trend: ' + (rev.perWeek >= 0 ? '+' : '') + U.fmtWeight(rev.perWeek, set.bodyUnit, 2) + ' ' + set.bodyUnit + ' per week' + (rev.waistDelta != null ? ' · waist ' + (rev.waistDelta >= 0 ? '+' : '') + U.fmtLen(rev.waistDelta, set.lenUnit, 1) + ' ' + set.lenUnit : '')) : null,
@@ -277,8 +300,8 @@
           UI.btn(rev.proposal ? 'Keep as is' : 'Got it', { kind: 'quiet', onClick: async () => { await Store.saveSettings({ reviewSeen: monthNo }); root.App.render(); } }))));
     }
 
-    // Gentle backup nudge: browsers can clear site data, and the file is the only safety net.
-    if (set.reminder !== 'off') {
+    // Gentle backup nudge: browsers can clear site data, and the file is the only safety net. Only on the real today.
+    if (onToday && set.reminder !== 'off') {
       const since = set.lastBackupAt ? E.daysBetween(set.lastBackupAt.slice(0, 10), t) : E.daysBetween(plan.startDate, t);
       if (since >= (set.reminder === 'monthly' ? 30 : 7)) cards.push(UI.cardX('good', h('div', { class: 'ct' }, 'Back up your data'), h('div', { class: 'muted' }, set.lastBackupAt ? 'Your last backup was ' + since + ' days ago.' : 'You have not made a backup yet.'), UI.btn('Back up now', { href: '#/settings' })));
     }
@@ -389,16 +412,19 @@
 
     // Food summary
     const tot = E.dayTotals(st, t);
-    cards.push(UI.card(h('div', { class: 'target-top' }, h('div', { class: 'ct' }, 'Fuel today'), h('a', { class: 'chip line', href: '#/fuel' }, 'Log food')),
+    cards.push(UI.card(h('div', { class: 'target-top' }, h('div', { class: 'ct' }, onToday ? 'Fuel today' : 'Food on ' + U.shortDate(t)), h('a', { class: 'chip line', href: '#/fuel' }, 'Log food')),
       h('div', { class: 'row' }, h('div', { class: 'grow' }, h('div', { class: 'display big' }, U.withCommas(tot.kcal), h('span', { class: 'muted unitbig' }, ' / ' + U.withCommas(plan.kcal) + ' kcal'))), h('div', { class: 'muted' }, tot.n ? Math.round(tot.protein) + ' / ' + plan.protein + ' g protein' : 'Nothing logged')),
-      U.bar(plan.kcal ? (tot.kcal / plan.kcal) * 100 : 0, tot.kcal > plan.kcal * 1.1 ? 'coral' : '', true)));
+      U.bar(plan.kcal ? (tot.kcal / plan.kcal) * 100 : 0, tot.kcal > plan.kcal * 1.1 ? 'coral' : '', true),
+      onToday ? null : h('div', { class: 'muted small' }, 'Log food always adds to today, not the date you are viewing.')));
 
     cards.push(Screens.waterCard(st, set));
-    cards.push(weighCard(st, set));
+    cards.push(weighCard(st, set, t));
     const tb = timerBar();
     if (tb) cards.push(tb);
+    if (!onToday) cards.unshift(UI.cardX('acc', h('div', { class: 'target-top' }, h('div', null, h('div', { class: 'ct' }, 'Viewing ' + U.longDate(t)), h('div', { class: 'muted small' }, 'You can log or edit this day, the same as today.')), h('button', { class: 'btn quiet small', type: 'button', onclick: () => { viewedDate = null; root.App.render(); } }, 'Back to today'))));
     const left = Screens.volatile ? h('div', { class: 'warnbox' }, 'Storage is blocked in this browser mode. Nothing here will be kept.') : null;
-    return UI.page(UI.header('Today', U.longDate(t), { right: h('div', { class: 'hdr-actions' }, h('a', { class: 'iconbtn', href: '#/profile', 'aria-label': 'Profile' }, U.icon('user', 20)), h('a', { class: 'iconbtn', href: '#/settings', 'aria-label': 'Privacy, backup and settings' }, U.icon('shield', 20))) }), UI.scroller(left, ...cards));
+    const dateBtn = h('button', { type: 'button', class: 'sub-btn', 'aria-label': 'Change date, currently ' + U.longDate(t), onclick: () => dateSheet(t, today, plan.startDate) }, U.longDate(t) + (onToday ? '' : ' · viewing'), U.icon('chev', 14));
+    return UI.page(UI.header('Today', dateBtn, { right: h('div', { class: 'hdr-actions' }, h('a', { class: 'iconbtn', href: '#/profile', 'aria-label': 'Profile' }, U.icon('user', 20)), h('a', { class: 'iconbtn', href: '#/settings', 'aria-label': 'Privacy, backup and settings' }, U.icon('shield', 20))) }), UI.scroller(left, ...cards));
   };
 
   // ---------- Lifts ----------

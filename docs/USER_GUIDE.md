@@ -2,6 +2,10 @@
 
 How the bigger features work, in more detail than the README. For installing, see [INSTALL.md](INSTALL.md); for backups, see [BACKUP.md](BACKUP.md).
 
+## Today: looking back at another date
+
+The date under "Today" is a button. Tap it to jump to another day: step back and forward one day at a time, or pick a date directly, anywhere from the day your plan started up to today (never beyond). While you're looking at an earlier date, a banner says so with a one-tap way back, and everything on the page — the suggested workout, sets, the weigh-in card and the food total — is for that day, not today, so you can fill in a day you forgot to log at the time. Sets and weigh-ins you add are saved against the date you're viewing. The one exception is **Log food**, which always opens Fuel for today; the page says so under the food card when you're looking at another day. The monthly check-in prompt and the backup reminder only ever appear on the real today, since they're about where things stand right now, not about the day you happen to be looking at.
+
 ## Activity, streaks and moving your workout
 
 **Log any workout.** Today and Progress have an Activity card, and Activity has the full screen (Today, then Details). **Log a workout**, choose what you did (strength training, swimming, football, tennis, badminton, pickleball, hot yoga, running, cycling, walking, HIIT and more, or *Other activity* with your own name), the date, how long, and how hard it was (easy, moderate or hard). Nothing here needs a watch or a phone sensor; everything is typed in. **Attach a photo (optional)** keeps a compressed copy on this device, the same way a Library photo does; it is never uploaded, and removing or replacing it deletes the old copy. Tap a workout in History to edit or delete it.

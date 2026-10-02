@@ -2546,6 +2546,89 @@ async function main() {
   eq(pgproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
   await pgctx.close();
 
+  // ================= Today: viewing and editing a past date =================
+  console.log('\nToday: date navigation');
+  const tdctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const tdpage = await tdctx.newPage(); tdpage.setDefaultTimeout(8000);
+  const tdproblems = await collect(tdpage);
+  await tdpage.goto(base);
+  await tdpage.waitForSelector('text=Track the change.');
+  await tdpage.evaluate(async () => {
+    const start = Engine.addDays(U.today(), -10);
+    const a = { sex: 'male', age: 31, heightCm: 180, weightKg: 82, units: { body: 'kg', length: 'cm', lift: 'lb' }, measurements: { waist: 86, chest: 100 }, goal: 'recomp', days: [0, 1, 2, 3, 4, 5, 6], startDate: start,
+      training: { split: 'auto', dbStep: 2.5, machineStep: 5, sets: 3, repStyle: 'mixed', deload: 'planned' }, lifts: [{ id: 'flat_db_press', on: true, weight: 40, reps: 8 }] };
+    await Store.append('profile_created', { profile: a, plan: Engine.buildPlan(a) });
+    await Store.saveSettings({ bodyUnit: 'kg', lenUnit: 'cm', liftUnit: 'lb', onboardedAt: new Date().toISOString() });
+    location.hash = '#/today'; App.render();
+  });
+  await tdpage.waitForSelector('text=Week ');
+  const tdYesterday = await tdpage.evaluate(() => Engine.addDays(U.today(), -1));
+  const tdStart = await tdpage.evaluate(() => Store.getState().plan.startDate);
+  const tdLongYesterday = await tdpage.evaluate((d) => U.longDate(d), tdYesterday);
+
+  await step('Today: the date in the header is a button that opens a picker with previous/next day navigation', async () => {
+    const dateBtn = tdpage.getByRole('button', { name: /Change date/ });
+    eq(await dateBtn.count(), 1, 'the header date is a single button');
+    await dateBtn.click();
+    const sh = tdpage.locator('#sheets');
+    await sh.getByText('Jump to a date').waitFor();
+    ok(await sh.getByRole('button', { name: /Next day/ }).isDisabled(), 'cannot go past today');
+    ok(!(await sh.getByRole('button', { name: /Previous day/ }).isDisabled()), 'can step back: the plan started 10 days ago');
+    await sh.getByRole('button', { name: /Previous day/ }).click();
+    await tdpage.getByText('Viewing ' + tdLongYesterday).waitFor();
+  });
+
+  await step('Today: viewing a past date shows a banner, and a logged set or weigh-in is dated to that day, not today', async () => {
+    eq(await tdpage.evaluate(() => location.hash), '#/today', 'still the Today screen, just a different date');
+    await tdpage.getByRole('button', { name: 'Back to today' }).waitFor(); // the viewing banner's own action
+    await tdpage.getByRole('button', { name: /Add an exercise|Log an exercise anyway/ }).click();
+    const sheet = tdpage.locator('#sheets');
+    await sheet.locator('select[aria-label="Exercise"]').selectOption({ label: 'Something else: type a name' });
+    await sheet.getByLabel('Name').fill('Face pulls');
+    await sheet.getByRole('button', { name: 'Next' }).click();
+    await sheet.getByText('Log set').waitFor();
+    await sheet.getByLabel('Reps', { exact: true }).fill('15');
+    await tdpage.getByRole('button', { name: 'Save', exact: true }).click();
+    await tdpage.waitForSelector('.setchip.done');
+    const lastSet = (await events(tdpage)).filter((e) => e.type === 'set_logged').pop();
+    eq(lastSet.data.date, tdYesterday, 'the set is dated to the viewed day');
+    await tdpage.getByLabel(/Weigh again|Morning weight|Weight for this date/).fill('81.4');
+    await tdpage.getByRole('button', { name: 'Log', exact: true }).click();
+    await tdpage.waitForFunction(() => Store.getState().weights.length === 1);
+    const w = (await events(tdpage)).filter((e) => e.type === 'weight_logged').pop();
+    eq(w.data.date, tdYesterday, 'the weigh-in is dated to the viewed day');
+    ok(/Log food always adds to today/.test(await tdpage.locator('#screen').innerText()), 'food logging is called out as always going to the real today');
+  });
+
+  await step('Today: a date outside the plan is refused, and "Back to today" returns to the real date', async () => {
+    const dateBtn = tdpage.getByRole('button', { name: /Change date/ });
+    await dateBtn.click();
+    let sh = tdpage.locator('#sheets');
+    await sh.getByLabel('Date', { exact: true }).fill(await tdpage.evaluate((d) => Engine.addDays(d, -1), tdStart));
+    await sh.getByRole('button', { name: 'Go', exact: true }).click();
+    await tdpage.getByText(/Pick a date within your plan/).waitFor();
+    eq(await tdpage.evaluate(() => location.hash), '#/today', 'rejected: still viewing the same day');
+    await sh.getByRole('button', { name: 'Back to today', exact: true }).click();
+    await tdpage.waitForFunction(() => !document.body.innerText.includes('Viewing '));
+    const headerTxt = await tdpage.getByRole('button', { name: /Change date/ }).innerText();
+    ok(!/viewing/i.test(headerTxt), 'header no longer flags "viewing": ' + headerTxt);
+    ok(headerTxt.includes(await tdpage.evaluate(() => U.longDate(U.today()))), 'header shows the real today\'s date again: ' + headerTxt);
+  });
+
+  await step('Today: the backup nudge only appears on the real today, not while looking back', async () => {
+    // the plan is 10 days old with no backup yet, so the weekly backup nudge is due on the real today
+    ok(/Back up your data/.test(await tdpage.locator('#screen').innerText()), 'on the real today, the backup nudge shows up');
+    const dateBtn = tdpage.getByRole('button', { name: /Change date/ });
+    await dateBtn.click();
+    await tdpage.locator('#sheets').getByRole('button', { name: /Previous day/ }).click();
+    await tdpage.getByText(/^Viewing /).waitFor();
+    ok(!/Back up your data/.test(await tdpage.locator('#screen').innerText()), 'the backup nudge does not follow you into the past');
+    await tdpage.getByRole('button', { name: 'Back to today' }).click();
+    await tdpage.waitForFunction(() => !document.body.innerText.includes('Viewing '));
+  });
+  eq(tdproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
+  await tdctx.close();
+
   // ================= file:// =================
   console.log('\nOnboarding with more lifts');
   {

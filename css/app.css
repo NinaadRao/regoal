@@ -44,6 +44,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .head-main { flex: 1; min-width: 0; }
 .head h1 { font-size: 30px; line-height: 1.05; }
 .sub { color: var(--ink2); font-size: 13.5px; margin-top: 2px; }
+.sub-btn { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--ink2); font-size: 13.5px; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+.sub-btn .ic { opacity: 0.6; }
 .hdr-actions { display: flex; gap: 8px; }
 .profhead { display: flex; align-items: center; gap: 14px; }
 .avatar { width: 56px; height: 56px; border-radius: 50%; background: var(--acc-bg); border: 1.5px solid var(--acc-line); color: var(--acc); display: flex; align-items: center; justify-content: center; font-family: var(--fd); font-weight: 800; font-size: 24px; flex-shrink: 0; }
