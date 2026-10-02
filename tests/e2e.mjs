@@ -1453,8 +1453,8 @@ async function main() {
   const tctx = await browser.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
   const tpage = await tctx.newPage(); tpage.setDefaultTimeout(6000);
   const tproblems = await collect(tpage);
-  const outside = []; // anything a photo screen or export sends to another origin (there must be none)
-  tpage.on('request', (r) => { const u = r.url(); if (!u.startsWith(base.replace('/index.html', '')) && !/^(blob|data):/.test(u)) outside.push(u); });
+  const outside = []; // anything a photo screen or export sends to another origin, other than an explicit opt-in Auto-align with AI call
+  tpage.on('request', (r) => { const u = r.url(); if (!u.startsWith(base.replace('/index.html', '')) && !/^(blob|data):/.test(u) && !/api\.anthropic\.com/.test(u)) outside.push(u); });
   await tpage.goto(base);
   await tpage.waitForSelector('text=Track the change.');
   // fictional data: three Front check-ins (weeks 1, 5, 9) with a weigh-in and measurements each; cm and kg
@@ -1484,8 +1484,7 @@ async function main() {
   const shortAt = (w) => tpage.evaluate((w) => U.shortDate(Engine.addDays(Engine.addDays(U.today(), -70), (w - 1) * 7)), w);
   const isoAt = (w) => tpage.evaluate((w) => Engine.addDays(Engine.addDays(U.today(), -70), (w - 1) * 7), w);
   const noWeekWords = async (where) => { const t = await tpage.locator('body').innerText(); ok(!/\b(Week|Wk|week|wk) ?\d/.test(t), where + ' shows no week numbers: ' + (t.match(/.{0,20}\b(Week|Wk|week|wk) ?\d.{0,20}/) || [''])[0]); };
-  const eventsBefore = await tpage.evaluate(() => Store.getEvents().length);
-  const mediaBefore = await tpage.evaluate(async () => (await Store.allMedia()).length);
+  let eventsBefore, mediaBefore; // set once the alignment tests below are done deliberately persisting their own events
 
   await step('photos screen offers the trend and compare, and shows the first and latest photo', async () => {
     await route(tpage, '#/photos');
@@ -1555,6 +1554,41 @@ async function main() {
     await tpage.waitForSelector('.stage');
   });
 
+  await step('trend: Align photo lets you drag to pan and +/- to zoom, saved per photo and remembered when you return', async () => {
+    const stage = tpage.locator('.stage');
+    if (await stage.evaluate((el) => el.classList.contains('blur'))) await stage.click(); // reveal before aligning
+    eq(await tpage.evaluate(() => Object.keys(Store.getState().photoAligns).length), 0, 'nothing aligned yet');
+    await tpage.getByRole('button', { name: 'Align photo' }).click();
+    const img = tpage.locator('.stage-img');
+    const box = await img.boundingBox();
+    await tpage.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await tpage.mouse.down();
+    await tpage.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 20, { steps: 5 });
+    await tpage.mouse.up();
+    await tpage.getByRole('button', { name: 'Zoom in' }).click();
+    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length > 0);
+    const saved = await tpage.evaluate(() => Object.values(Store.getState().photoAligns)[0]);
+    ok(saved.scale > 1, 'zoom in raised the scale: ' + saved.scale);
+    ok(saved.dx !== 0 || saved.dy !== 0, 'the drag moved it off-centre: ' + JSON.stringify(saved));
+    // the style getter re-serializes (drops trailing zeros) and the saved copy is rounded to 3 decimals for
+    // storage, so compare the numbers with a little slack rather than the raw strings.
+    const nums = (t) => (t.match(/-?[\d.]+/g) || []).map(Number);
+    const transform = await img.evaluate((el) => el.style.transform);
+    const close = (t, dx, dy, scale) => { const [a, b, c] = nums(t); return Math.abs(a - dx * 100) < 0.5 && Math.abs(b - dy * 100) < 0.5 && Math.abs(c - scale) < 0.01; };
+    ok(close(transform, saved.dx, saved.dy, saved.scale), 'the live transform matches what was saved: ' + transform + ' vs saved=' + JSON.stringify(saved));
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+    // leaving and returning shows the same alignment automatically, with align mode itself back off
+    await route(tpage, '#/photos');
+    await route(tpage, '#/photos/trend');
+    eq(await tpage.getByRole('button', { name: 'Done aligning' }).count(), 0, 'align mode is off again on a fresh visit');
+    const transform2 = await tpage.locator('.stage-img').evaluate((el) => el.style.transform);
+    ok(close(transform2, saved.dx, saved.dy, saved.scale), 'the saved alignment re-applies without needing Align mode on: ' + transform2);
+    await tpage.getByRole('button', { name: 'Align photo' }).click();
+    await tpage.getByRole('button', { name: 'Reset' }).click();
+    await tpage.waitForFunction(() => { const v = Object.values(Store.getState().photoAligns)[0]; return v.scale === 1 && v.dx === 0 && v.dy === 0; });
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+  });
+
   await step('compare: pick any two dates; slider, side by side and overlay; numbers with the change', async () => {
     await tpage.getByRole('link', { name: 'Compare two dates' }).click();
     await tpage.waitForSelector('.cmp-slider');
@@ -1580,6 +1614,66 @@ async function main() {
     ok(await tpage.getByRole('button', { name: 'Download image' }).isDisabled(), 'the same check-in twice cannot be downloaded');
     await tpage.getByLabel('Before').selectOption('1'); await tpage.getByLabel('After').selectOption('9');
   });
+
+  await step('compare: Align photos pans/zooms the picked photo instead of moving the reveal line, and Side by side aligns both independently', async () => {
+    await tpage.getByRole('radio', { name: 'Slider' }).click();
+    await tpage.getByRole('button', { name: 'Align photos' }).click();
+    const handle = tpage.locator('.cmp-handle');
+    const before = await handle.getAttribute('aria-valuenow');
+    const box = await tpage.locator('.cmp-slider').boundingBox();
+    await tpage.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2); await tpage.mouse.down();
+    await tpage.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 5 }); await tpage.mouse.up();
+    eq(await handle.getAttribute('aria-valuenow'), before, 'aligning suppresses the reveal-position drag');
+    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length > 0);
+    await tpage.getByRole('radio', { name: 'After' }).click();
+    await tpage.getByRole('button', { name: 'Zoom in' }).click();
+    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length >= 2);
+    eq(await tpage.evaluate(() => Object.keys(Store.getState().photoAligns).length), 2, 'before and after each got their own saved alignment');
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+    await tpage.getByRole('radio', { name: 'Side by side' }).click();
+    await tpage.getByRole('button', { name: 'Align photos' }).click();
+    eq(await tpage.getByRole('radio', { name: 'Before' }).count(), 0, 'side by side needs no Before/After picker: both photos are directly draggable');
+    await tpage.getByRole('button', { name: 'Reset both' }).click();
+    await tpage.waitForFunction(() => Object.values(Store.getState().photoAligns).every((a) => a.scale === 1 && a.dx === 0 && a.dy === 0));
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+  });
+
+  await step('compare: Auto-align with AI offers a key first, then sends only after an explicit confirm, as an editable suggestion', async () => {
+    const cbId = await tpage.evaluate(() => Store.getState().photos.find((p) => p.week === 9 && p.angle === 'Front').id);
+    await tpage.getByRole('button', { name: 'Align photos' }).click();
+    await tpage.getByRole('button', { name: 'Auto-align with AI' }).click();
+    await tpage.getByRole('button', { name: 'Add your key' }).waitFor();
+    await tpage.keyboard.press('Escape');
+    await tpage.evaluate(() => App.setKey('sk-ant-test-0000000000', 'typed'));
+    const tai = await fakeAI(tpage, async () => ({ body: textReply(JSON.stringify({ dx: 0.18, dy: -0.12, scale: 1.4, assumptions: ['Shifted and zoomed to match head-to-foot framing.'], confidence: 'medium' })) }));
+    await tpage.getByRole('button', { name: 'Auto-align with AI' }).click();
+    const sheet = tpage.locator('#sheets').last();
+    await sheet.getByText(/Regoal never sends progress photos to AI on its own/).waitFor();
+    eq(tai.length, 0, 'nothing sent before confirming');
+    await sheet.getByRole('button', { name: 'Send these two photos' }).click();
+    await sheet.getByRole('button', { name: 'Use this' }).waitFor();
+    eq(tai.length, 1);
+    const content = tai[0].messages[tai[0].messages.length - 1].content;
+    eq(content.filter((c) => c.type === 'image').length, 2, 'both photos sent, nothing else');
+    await sheet.getByText(/Shifted and zoomed to match head-to-foot framing/).waitFor();
+    eq(await tpage.evaluate((id) => Store.getState().photoAligns[id].scale, cbId), 1, 'nothing is written to the store yet, only shown live on the photo');
+    await sheet.getByRole('button', { name: 'Discard suggestion' }).click();
+    eq(await tpage.evaluate(() => Object.values(Store.getState().photoAligns).every((a) => a.scale === 1 && a.dx === 0 && a.dy === 0)), true, 'discarding leaves everything as it was');
+    await tpage.getByRole('button', { name: 'Auto-align with AI' }).click();
+    await tpage.locator('#sheets').last().getByRole('button', { name: 'Send these two photos' }).click();
+    await tpage.locator('#sheets').last().getByRole('button', { name: 'Use this' }).click();
+    await tpage.waitForFunction((id) => Store.getState().photoAligns[id].scale > 1, cbId);
+    eq(tai.length, 2, 'the accepted run sent its own request too');
+    const saved = await tpage.evaluate((id) => Store.getState().photoAligns[id], cbId);
+    eq(saved.scale, 1.4); eq(saved.dx, 0.18); eq(saved.dy, -0.12);
+    const resetBoth = () => tpage.getByRole('button', { name: 'Reset both' }).click();
+    await resetBoth();
+    await tpage.waitForFunction(() => Object.values(Store.getState().photoAligns).every((a) => a.scale === 1 && a.dx === 0 && a.dy === 0));
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+  });
+
+  eventsBefore = await tpage.evaluate(() => Store.getEvents().length);
+  mediaBefore = await tpage.evaluate(async () => (await Store.allMedia()).length);
 
   await step('download image: unblurred warning, PNG saved with a plain name, built and kept on this device only', async () => {
     await tpage.getByRole('radio', { name: 'Side by side' }).click();
@@ -1616,6 +1710,28 @@ async function main() {
       return out;
     });
     for (const x of r) { eq(x.type, 'image/jpeg', x.layout); eq(x.soi, [0xff, 0xd8], x.layout); ok(!x.exif, 'no Exif in ' + x.layout); }
+  });
+
+  await step('a saved alignment actually changes what composeComparison and stillFrame draw, not just an auto-centred crop', async () => {
+    const r = await tpage.evaluate(async () => {
+      const st = Store.getState(), cis = Engine.checkIns(st, 'Front').filter((c) => c.photo);
+      const blob = (await Store.getMedia(cis[0].photo.id)).blob;
+      const align = { dx: 0.8, dy: 0.8, scale: 3 };
+      async function compareBytes(a) {
+        const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align: a }, b: { blob, label: 'B' }, layout: 'side', format: 'png', labels: false, rows: null, head: ['', ''] });
+        return Array.from(new Uint8Array(await out.arrayBuffer()));
+      }
+      const base = await compareBytes(null), shifted = await compareBytes(align);
+      const diffCompare = base.length !== shifted.length || base.some((v, i) => v !== shifted[i]);
+      const stillUrl = async (a) => {
+        const cv = await MediaOut.stillFrame({ frames: [{ blob, title: '', numbers: '', align: a }], shape: 'square', labels: false, numbers: false }, 0, 0.3);
+        return cv.toDataURL();
+      };
+      const diffStill = (await stillUrl(null)) !== (await stillUrl(align));
+      return { diffCompare, diffStill };
+    });
+    ok(r.diffCompare, 'composeComparison draws a different image once a photo has a saved alignment');
+    ok(r.diffStill, 'the time-lapse frame (same cover() path) also reflects it');
   });
 
   await step('download time-lapse: warning, real video from the photos, cancel leaves nothing behind', async () => {

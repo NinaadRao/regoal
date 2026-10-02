@@ -5,7 +5,7 @@
  */
 (function (root) {
   'use strict';
-  const U = root.U, UI = root.UI, Store = root.Store, MediaOut = root.MediaOut;
+  const U = root.U, UI = root.UI, Store = root.Store, MediaOut = root.MediaOut, E = root.Engine;
   const { h } = U;
   const Screens = root.Screens = root.Screens || {};
   const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -45,9 +45,9 @@
   // ---------- time-lapse ----------
   // o: { angle, items: check-ins with a photo, index, numbersText, wkLabel }
   Screens._.videoSheet = async function (o) {
-    const set = Store.getSettings();
+    const set = Store.getSettings(), st = Store.getState();
     const frames = [];
-    for (const c of o.items) { const m = await Store.getMedia(c.photo.id); if (m) frames.push({ blob: m.blob, title: o.wkLabel(c), numbers: o.numbersText(c.snap, set) }); }
+    for (const c of o.items) { const m = await Store.getMedia(c.photo.id); if (m) frames.push({ blob: m.blob, title: o.wkLabel(c), numbers: o.numbersText(c.snap, set), align: E.photoAlignFor(st, c.photo.id) }); }
     if (frames.length < 2) { U.toast('Those photos are not on this device, so there is nothing to make a video from.', 'warn'); return; }
     const idx = clamp(o.index, 0, frames.length - 1);
     const opt = { shape: 'story', secondsPer: 1, labels: true, numbers: true };
@@ -100,13 +100,15 @@
   };
 
   // ---------- comparison image ----------
-  // o: { angle, a, b (check-ins with a photo), rows, mode, pos, blend }
+  // o: { angle, a, b (check-ins with a photo), rows, mode, pos, blend, aligns?: {a, b} (live drafts from Compare) }
   Screens._.imageSheet = async function (o) {
     const set = Store.getSettings();
     const ma = await Store.getMedia(o.a.photo.id), mb = await Store.getMedia(o.b.photo.id);
     if (!ma || !mb) { U.toast('One of those photos is not on this device.', 'warn'); return; }
     const opt = { layout: 'side', format: 'jpeg', labels: true, table: o.rows.length > 0 };
-    const A = { blob: ma.blob, label: U.longDate(o.a.date) }, B = { blob: mb.blob, label: U.longDate(o.b.date) };
+    const aligns = o.aligns || {};
+    const A = { blob: ma.blob, label: U.longDate(o.a.date), align: aligns.a || E.photoAlignFor(Store.getState(), o.a.photo.id) };
+    const B = { blob: mb.blob, label: U.longDate(o.b.date), align: aligns.b || E.photoAlignFor(Store.getState(), o.b.photo.id) };
     const build = (scale) => MediaOut.composeComparison({ a: A, b: B, layout: opt.layout, format: scale ? 'jpeg' : opt.format, labels: opt.labels, rows: opt.table ? o.rows : null, head: [U.shortDate(o.a.date), U.shortDate(o.b.date)], pos: o.pos, blend: o.blend, scale });
     const box = h('div', { class: 'stack' });
     const urls = [];

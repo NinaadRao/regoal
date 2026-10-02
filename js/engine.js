@@ -218,6 +218,36 @@
   // The active switch (if any) for one exercise on one date, or null.
   function exSwitchFor(state, date, from) { return (state.exSwitches && state.exSwitches[date + '|' + from]) || null; }
 
+  // A manual (or AI-suggested, always user-confirmed) pan/zoom alignment saved against one photo, so Compare and
+  // Trend can line it up with another check-in without re-doing the drag every time. dx/dy are fractions of the
+  // photo's own width/height (so they stay meaningful at any stage size); scale is a simple zoom factor.
+  function cleanPhotoAlign(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || hasBadKeys(raw, 0)) return { ok: false, errors: ['That is not an alignment.'] };
+    const id = String(raw.id || '');
+    if (!/^[a-z0-9][a-z0-9_]{0,69}$/.test(id)) return { ok: false, errors: ['Bad id.'] };
+    const num = (x, lo, hi, dflt) => { const n = Number(x); return Number.isFinite(n) ? clamp(n, lo, hi) : dflt; };
+    const dx = clean(num(raw.dx, -1, 1, 0));
+    const dy = clean(num(raw.dy, -1, 1, 0));
+    const scale = clean(num(raw.scale, 1, 4, 1));
+    return { ok: true, value: { id, dx, dy, scale } };
+  }
+  // The saved alignment for one photo (by media id), or a neutral default if none was ever saved.
+  function photoAlignFor(state, id) { return (state.photoAligns && state.photoAligns[id]) || { id, dx: 0, dy: 0, scale: 1 }; }
+
+  // Clamps an AI-suggested pan/zoom to the same sane ranges as a saved alignment, with no id required —
+  // the caller already knows which photo it is for. Always shown to the user to accept or change, never
+  // applied on its own.
+  function normalizePhotoAlign(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || hasBadKeys(raw, 0)) return { ok: false, errors: ['That is not an alignment.'] };
+    const num = (x, lo, hi, dflt) => { const n = Number(x); return Number.isFinite(n) ? clamp(n, lo, hi) : dflt; };
+    const dx = clean(num(raw.dx, -1, 1, 0));
+    const dy = clean(num(raw.dy, -1, 1, 0));
+    const scale = clean(num(raw.scale, 1, 4, 1));
+    const assumptions = Array.isArray(raw.assumptions) ? raw.assumptions.slice(0, 6).map((x) => cleanStr(x, 160)).filter(Boolean) : [];
+    const confidence = ['low', 'medium', 'high'].includes(raw.confidence) ? raw.confidence : 'medium';
+    return { ok: true, value: { dx, dy, scale, assumptions, confidence } };
+  }
+
   // The block (0 to 4) a week falls in. Blocks are laid out for a 26-week plan; other lengths are stretched or squeezed to fit.
   function blockOfWeek(w, weeks) {
     const n = weeks && weeks !== WEEKS ? Math.ceil((w - 1) * WEEKS / weeks) + 1 : w;
@@ -599,7 +629,7 @@
   function project(events) {
     const voided = new Set();
     for (const e of events) if (e.type === 'event_voided') voided.add(e.data.target);
-    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), exSwitches: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
+    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), exSwitches: Object.create(null), photoAligns: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
     for (const e of events) {
       if (voided.has(e.seq) || e.type === 'event_voided') continue;
       const d = e.data || {};
@@ -625,6 +655,7 @@
           break;
         }
         case 'exercise_switched': { const r = cleanExerciseSwitch(d); if (r.ok) s.exSwitches[r.value.date + '|' + r.value.from] = Object.assign({ seq: e.seq }, r.value); break; }
+        case 'photo_aligned': { const r = cleanPhotoAlign(d); if (r.ok) s.photoAligns[r.value.id] = Object.assign({ seq: e.seq }, r.value); break; }
         default: break;
       }
       } catch (err) { /* one unusable event must never stop the app from opening; it is skipped */ }
@@ -849,7 +880,7 @@
   }
 
   // ---------- backup / import validation ----------
-  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
+  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'photo_aligned', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
   const BAD_KEYS = ['__proto__', 'constructor', 'prototype'];
   function hasBadKeys(o, depth) {
     if (o === null || typeof o !== 'object') return false;
@@ -1269,7 +1300,7 @@
     buildWorkouts, buildPlan, weeklyTargets, validateMacroChange, validateLiftChange, project, avgWeightSeries, latestMeas, setsForWeek,
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
-    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor,
+    LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor, cleanPhotoAlign, photoAlignFor, normalizePhotoAlign,
     validISO, hasLift, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,

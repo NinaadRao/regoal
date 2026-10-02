@@ -36,12 +36,18 @@
     ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
   // Fill a box with the photo, cropping the overflow evenly (the same framing the compare screen shows).
-  function cover(ctx, im, x, y, w, hh, alpha) {
+  // align: an optional saved { dx, dy, scale } (see Engine.photoAlignFor) — the same manual or AI-suggested
+  // pan/zoom the live preview applies with a CSS transform, reproduced here in source-pixel terms so a
+  // downloaded image or time-lapse matches what was actually lined up on screen, not just an auto-centred crop.
+  function cover(ctx, im, x, y, w, hh, alpha, align) {
     const d = dims(im), k = Math.max(w / d.w, hh / d.h), sw = w / k, sh = hh / k;
+    const a = align || { dx: 0, dy: 0, scale: 1 }, scale = a.scale || 1;
+    const cw = sw / scale, ch = sh / scale;
+    const cx = d.w / 2 + a.dx * cw, cy = d.h / 2 + a.dy * ch;
     ctx.save();
     if (alpha != null) ctx.globalAlpha = alpha;
     ctx.beginPath(); ctx.rect(x, y, w, hh); ctx.clip();
-    ctx.drawImage(im, (d.w - sw) / 2, (d.h - sh) / 2, sw, sh, x, y, w, hh);
+    ctx.drawImage(im, cx - cw / 2, cy - ch / 2, cw, ch, x, y, w, hh);
     ctx.restore();
   }
   function pill(ctx, text, x, y, px, align) {
@@ -55,8 +61,8 @@
   }
 
   // ---------- comparison image ----------
-  // o: { a, b: {blob, label}, layout: 'side'|'slider'|'overlay', format: 'jpeg'|'png', labels, rows: [{name, a, b, change, tone}]|null,
-  //      head: [labelA, labelB], pos (0..1, slider), blend (0..1, overlay), scale }
+  // o: { a, b: {blob, label, align?: {dx,dy,scale}}, layout: 'side'|'slider'|'overlay', format: 'jpeg'|'png', labels,
+  //      rows: [{name, a, b, change, tone}]|null, head: [labelA, labelB], pos (0..1, slider), blend (0..1, overlay), scale }
   async function composeComparison(o) {
     await fontsReady();
     const A = await decode(o.a.blob), B = await decode(o.b.blob);
@@ -69,16 +75,17 @@
       const cv = canvasOf(W, ch + tableH), ctx = cv.getContext('2d');
       ctx.fillStyle = C.chalk; ctx.fillRect(0, 0, cv.width, cv.height);
       const pos = Math.max(0, Math.min(1, o.pos == null ? 0.5 : o.pos)), blend = Math.max(0, Math.min(1, o.blend == null ? 0.5 : o.blend));
-      if (o.layout === 'side') { cover(ctx, A, 0, 0, cw, ch); cover(ctx, B, cw + gap, 0, cw, ch); }
+      const alignA = o.a.align, alignB = o.b.align;
+      if (o.layout === 'side') { cover(ctx, A, 0, 0, cw, ch, null, alignA); cover(ctx, B, cw + gap, 0, cw, ch, null, alignB); }
       else if (o.layout === 'slider') {
-        cover(ctx, B, 0, 0, cw, ch);
-        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pos * cw, ch); ctx.clip(); cover(ctx, A, 0, 0, cw, ch); ctx.restore();
+        cover(ctx, B, 0, 0, cw, ch, null, alignB);
+        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pos * cw, ch); ctx.clip(); cover(ctx, A, 0, 0, cw, ch, null, alignA); ctx.restore();
         const x = pos * cw, lw = Math.max(2, 6 * k), r = 30 * k;
         ctx.fillStyle = C.acc; ctx.fillRect(x - lw / 2, 0, lw, ch);
         ctx.beginPath(); ctx.arc(x, ch / 2, r, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = C.chalk; ctx.lineWidth = Math.max(2, 5 * k); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
         ctx.beginPath(); ctx.moveTo(x - 6 * k, ch / 2 - 10 * k); ctx.lineTo(x - 16 * k, ch / 2); ctx.lineTo(x - 6 * k, ch / 2 + 10 * k); ctx.moveTo(x + 6 * k, ch / 2 - 10 * k); ctx.lineTo(x + 16 * k, ch / 2); ctx.lineTo(x + 6 * k, ch / 2 + 10 * k); ctx.stroke();
-      } else { cover(ctx, A, 0, 0, cw, ch); cover(ctx, B, 0, 0, cw, ch, blend); }
+      } else { cover(ctx, A, 0, 0, cw, ch, null, alignA); cover(ctx, B, 0, 0, cw, ch, blend, alignB); }
       if (o.labels) {
         const px = Math.round(W * (single ? 0.03 : 0.024)), m = Math.round(W * 0.02), ph = px * 1.9;
         if (o.layout === 'side') { pill(ctx, o.a.label, m, ch - m - ph, px, 'left'); pill(ctx, o.b.label, cw + gap + m, ch - m - ph, px, 'left'); }
@@ -122,12 +129,12 @@
     let hh = Math.round(1080 * d.h / d.w); hh = Math.max(720, Math.min(1920, hh)); hh -= hh % 2;
     return { W: 1080, H: hh, cell: { x: 0, y: 0, w: 1080, h: hh }, bars: false };
   }
-  // One frame. st: { prev, next, t (0..1 fade to next), labels, numbers }; prev/next: { im, title, numbers }
+  // One frame. st: { prev, next, t (0..1 fade to next), labels, numbers }; prev/next: { im, title, numbers, align }
   function drawFrame(ctx, g, st) {
     ctx.fillStyle = C.chalk; ctx.fillRect(0, 0, g.W, g.H);
     const c = g.cell;
-    cover(ctx, st.prev.im, c.x, c.y, c.w, c.h);
-    if (st.next && st.t > 0) cover(ctx, st.next.im, c.x, c.y, c.w, c.h, st.t);
+    cover(ctx, st.prev.im, c.x, c.y, c.w, c.h, null, st.prev.align);
+    if (st.next && st.t > 0) cover(ctx, st.next.im, c.x, c.y, c.w, c.h, st.t, st.next.align);
     const cur = st.next && st.t >= 0.5 ? st.next : st.prev;
     ctx.textBaseline = 'middle';
     if (g.bars) {
@@ -150,14 +157,14 @@
     try {
       const g = geometry(o.shape, dims(im)), k = scale || 0.3, cv = canvasOf(g.W * k, g.H * k), ctx = cv.getContext('2d');
       ctx.setTransform(k, 0, 0, k, 0, 0);
-      drawFrame(ctx, g, { prev: { im, title: f.title, numbers: f.numbers }, next: null, t: 0, labels: o.labels, numbers: o.numbers });
+      drawFrame(ctx, g, { prev: { im, title: f.title, numbers: f.numbers, align: f.align }, next: null, t: 0, labels: o.labels, numbers: o.numbers });
       return cv;
     } finally { release(im); }
   }
   function videoSeconds(n, secondsPer) { return n * secondsPer + 0.4; }
   function videoSizeMB(n, secondsPer) { return Math.max(1, Math.round(videoSeconds(n, secondsPer) * VIDEO_BPS / 8 / 1e6)); }
 
-  // o: { frames: [{blob, title, numbers}], shape: 'story'|'square'|'original', secondsPer, labels, numbers, onProgress(0..1, text), signal }
+  // o: { frames: [{blob, title, numbers, align?: {dx,dy,scale}}], shape: 'story'|'square'|'original', secondsPer, labels, numbers, onProgress(0..1, text), signal }
   async function renderTimelapse(o) {
     const mime = pickVideoMime();
     if (!mime) throw new Error('This browser cannot save video as MP4. Open Regoal in Safari or Chrome, or save a comparison image instead.');
@@ -171,7 +178,7 @@
       for (let i = 0; i < o.frames.length; i++) { say(0, 'Preparing photo ' + (i + 1) + ' of ' + o.frames.length); ims.push(await decode(o.frames[i].blob)); if (aborted()) throw cancel(); }
       const g = geometry(o.shape, dims(ims[0])), cv = canvasOf(g.W, g.H), ctx = cv.getContext('2d');
       const n = ims.length, D = o.secondsPer * 1000, F = Math.min(250, D * 0.3), total = videoSeconds(n, o.secondsPer) * 1000;
-      const fr = ims.map((im, i) => ({ im, title: o.frames[i].title, numbers: o.frames[i].numbers }));
+      const fr = ims.map((im, i) => ({ im, title: o.frames[i].title, numbers: o.frames[i].numbers, align: o.frames[i].align }));
       const draw = (t) => {
         const i = Math.min(n - 1, Math.floor(t / D)), local = t - i * D;
         const fade = i < n - 1 && local > D - F ? (local - (D - F)) / F : 0;

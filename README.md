@@ -90,6 +90,7 @@ A private, local-first tracker for lifts, workouts and sport, food, body weight,
 - Log weigh-ins and measurements in kg or lb and cm or in.
 - A weekly photo check-in (five angles) on the day you pick, Friday by default. Today reminds you and flags any you missed.
 - Scrub or play through your check-ins with the numbers of each day under the photo, compare any two dates, and save a time-lapse video or comparison image. Photos stay blurred until you tap.
+- Not every photo lines up the same way: drag to pan and pinch, scroll or tap +/- to zoom, in the trend scrubber and all three Compare views; it's saved per photo and carries through to downloads. Compare can also ask your own AI to suggest the fit — the one case where a progress photo goes to AI, only on that explicit tap, shown as an editable suggestion you accept or discard.
 
 **Workout library and reel**
 - Keep gym photos and clips without copying the original file: Regoal stores a small preview for both and, for a photo, a compressed copy you can reopen any time; your originals stay where you took them.

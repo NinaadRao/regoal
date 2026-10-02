@@ -388,6 +388,72 @@ test('exSwitchFor and project(): a switch applies only to its own date and id, a
   assert.equal(E.exSwitchFor(voided, '2026-01-06', 'acc_x'), null, 'voiding the switch removes it');
 });
 
+test('cleanPhotoAlign: rebuilds a drag/zoom alignment from a whitelist, clamping out-of-range numbers and refusing a bad id', () => {
+  const good = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 0.2, dy: -0.1, scale: 1.5 });
+  assert.equal(good.ok, true);
+  assert.equal(good.value.id, 'p_3_front_abc123');
+  assert.equal(good.value.dx, 0.2);
+  assert.equal(good.value.dy, -0.1);
+  assert.equal(good.value.scale, 1.5);
+
+  const clamped = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 9, dy: -9, scale: 99 });
+  assert.equal(clamped.ok, true);
+  assert.equal(clamped.value.dx, 1, 'dx is clamped to the [-1, 1] fraction range');
+  assert.equal(clamped.value.dy, -1);
+  assert.equal(clamped.value.scale, 4, 'scale is clamped to [1, 4]');
+
+  const dflt = E.cleanPhotoAlign({ id: 'p_3_front_abc123' });
+  assert.equal(dflt.ok, true);
+  assert.equal(dflt.value.dx, 0, 'a missing number falls back to the neutral default');
+  assert.equal(dflt.value.scale, 1);
+
+  assert.equal(E.cleanPhotoAlign({ id: 'Not An Id!' }).ok, false, 'the id must be a plain media id');
+  assert.equal(E.cleanPhotoAlign(null).ok, false);
+  assert.equal(E.cleanPhotoAlign(JSON.parse('{"id":"p_3","__proto__":{"polluted":true}}')).ok, false);
+});
+
+test('photoAlignFor and project(): an alignment is keyed by photo id, defaults to neutral, and voiding removes it', () => {
+  const plan = E.buildPlan(answers());
+  const events = [
+    { seq: 1, ts: 't', type: 'profile_created', data: { profile: {}, plan } },
+    { seq: 2, ts: 't', type: 'photo_aligned', data: { id: 'p_1_front_a', dx: 0.1, dy: 0.2, scale: 2 } },
+  ];
+  const st = E.project(events);
+  assert.equal(E.photoAlignFor(st, 'p_1_front_a').scale, 2);
+  assert.deepEqual(E.photoAlignFor(st, 'p_9_front_z'), { id: 'p_9_front_z', dx: 0, dy: 0, scale: 1 }, 'an unsaved photo gets the neutral default');
+  // A later save for the same photo overwrites, last-write-wins, rather than appending.
+  const updated = E.project(events.concat([{ seq: 3, ts: 't', type: 'photo_aligned', data: { id: 'p_1_front_a', dx: 0, dy: 0, scale: 3 } }]));
+  assert.equal(E.photoAlignFor(updated, 'p_1_front_a').scale, 3);
+  const voided = E.project(events.concat([{ seq: 3, ts: 't', type: 'event_voided', data: { target: 2 } }]));
+  assert.equal(E.photoAlignFor(voided, 'p_1_front_a').scale, 1, 'voiding the alignment restores the neutral default');
+});
+
+test('normalizePhotoAlign: clamps an AI-suggested pan/zoom, needs no id, and falls back on junk', () => {
+  const good = E.normalizePhotoAlign({ dx: 0.3, dy: -0.2, scale: 2, assumptions: ['Shifted right to match framing.'], confidence: 'high' });
+  assert.equal(good.ok, true);
+  assert.equal(good.value.dx, 0.3);
+  assert.equal(good.value.dy, -0.2);
+  assert.equal(good.value.scale, 2);
+  assert.equal(good.value.confidence, 'high');
+  assert.equal(good.value.assumptions.length, 1);
+
+  const clamped = E.normalizePhotoAlign({ dx: -9, dy: 9, scale: 100, confidence: 'nonsense' });
+  assert.equal(clamped.ok, true);
+  assert.equal(clamped.value.dx, -1);
+  assert.equal(clamped.value.dy, 1);
+  assert.equal(clamped.value.scale, 4);
+  assert.equal(clamped.value.confidence, 'medium', 'an unrecognised confidence falls back to medium');
+
+  const dflt = E.normalizePhotoAlign({});
+  assert.equal(dflt.ok, true);
+  assert.equal(dflt.value.dx, 0);
+  assert.equal(dflt.value.scale, 1);
+  assert.deepEqual(dflt.value.assumptions, []);
+
+  assert.equal(E.normalizePhotoAlign(null).ok, false);
+  assert.equal(E.normalizePhotoAlign(JSON.parse('{"dx":0,"__proto__":{"polluted":true}}')).ok, false);
+});
+
 // ---------- water: goal, logging and the pacing nudge ----------
 test('waterGoalMl: body weight sets the baseline, and training minutes add a capped extra', () => {
   const plan = E.buildPlan(answers());
