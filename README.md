@@ -87,7 +87,7 @@ A private, local-first tracker for lifts, workouts and sport, food, body weight,
 - AI results always show an editable confirmation card. Nothing is saved until you tap "Looks right".
 
 **Body and photos**
-- Log weigh-ins and measurements in kg or lb and cm or in.
+- Log weigh-ins and measurements in kg or lb and cm or in. Weight shows a 7-day average trend; any measurement site with two or more readings gets its own chart against your six-month goal, and the 14-day food log charts calories, protein, carbs and fat against your targets.
 - A weekly photo check-in (five angles) on the day you pick, Friday by default. Today reminds you and flags any you missed.
 - Scrub or play through your check-ins with the numbers of each day under the photo, compare any two dates, and save a time-lapse video or comparison image. Photos stay blurred until you tap.
 - Not every photo lines up the same way: drag to pan and pinch, scroll or tap +/- to zoom, in the trend scrubber and all three Compare views; it's saved per photo and carries through to downloads. Compare can also ask your own AI to suggest the fit — the one case where a progress photo goes to AI, only on that explicit tap, shown as an editable suggestion you accept or discard.

@@ -2505,6 +2505,47 @@ async function main() {
   });
   await gctx.close();
 
+  // ================= progress: measurement and macro charts =================
+  console.log('\nProgress graphs');
+  const pgctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pgpage = await pgctx.newPage(); pgpage.setDefaultTimeout(8000);
+  const pgproblems = await collect(pgpage);
+  await pgpage.goto(base);
+  await pgpage.waitForSelector('text=Track the change.');
+  await pgpage.evaluate(async () => {
+    const start = Engine.addDays(U.today(), -20);
+    const a = { sex: 'male', age: 31, heightCm: 180, weightKg: 82, units: { body: 'kg', length: 'cm', lift: 'lb' }, measurements: { waist: 86, chest: 100 }, goal: 'recomp', days: [1, 2, 3, 4, 5], startDate: start,
+      training: { split: 'auto', dbStep: 2.5, machineStep: 5, sets: 3, repStyle: 'mixed', deload: 'planned' }, lifts: [{ id: 'flat_db_press', on: true, weight: 40, reps: 8 }] };
+    await Store.append('profile_created', { profile: a, plan: Engine.buildPlan(a) });
+    await Store.saveSettings({ bodyUnit: 'kg', lenUnit: 'cm', liftUnit: 'lb', onboardedAt: new Date().toISOString(), blurPhotos: false });
+    const waist = [86, 85.4, 84.9], chest = [100, 100.3];
+    for (let i = 0; i < waist.length; i++) await Store.append('measurement_logged', { date: Engine.addDays(U.today(), -10 + i * 3), site: 'waist', cm: waist[i] });
+    for (let i = 0; i < chest.length; i++) await Store.append('measurement_logged', { date: Engine.addDays(U.today(), -9 + i * 3), site: 'chest', cm: chest[i] });
+    const plan = Store.getState().plan;
+    for (let i = 3; i >= 1; i--) await Store.append('food_logged', { date: Engine.addDays(U.today(), -i), meal: 'Lunch', name: 'Fixture meal', kcal: plan.kcal - 100, protein: plan.protein - 10, carbs: plan.carbs - 20, fat: plan.fat - 5 });
+  });
+  await step('Progress: a measurement site with two or more readings gets a chart with a dot per reading and the six-month goal as a dashed line', async () => {
+    await route(pgpage, '#/progress');
+    const measCard = pgpage.locator('section.card', { hasText: 'Measurements' });
+    await measCard.locator('.chart').first().waitFor();
+    eq(await measCard.locator('.chart').count(), 2, 'waist (3 readings) and chest (2 readings) each get a chart');
+    const labels = await measCard.locator('.chart').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+    ok(labels.includes('Waist over time'), 'waist chart labelled: ' + labels);
+    ok(labels.includes('Chest over time'), 'chest chart labelled: ' + labels);
+    eq(await measCard.locator('.chart circle').count(), 5, 'three waist dots plus two chest dots');
+    eq(await measCard.locator('.chart polyline[stroke-dasharray="5 4"]').count(), 2, 'a dashed goal line per charted site');
+  });
+  await step('Progress: Food, last 14 days shows protein, carbs and fat charts against target alongside calories', async () => {
+    const foodCard = pgpage.locator('section.card', { hasText: 'Food, last 14 days' });
+    await foodCard.waitFor();
+    const labels = await foodCard.locator('.chart').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+    eq(labels.length, 4, 'calories plus protein, carbs and fat: ' + labels);
+    for (const want of ['Calories per day against target', 'Protein per day against target', 'Carbs per day against target', 'Fat per day against target']) ok(labels.includes(want), want + ' chart present: ' + labels);
+    eq(await foodCard.locator('.chart circle').count(), 4 * 3, 'three logged days plotted on each of the four charts');
+  });
+  eq(pgproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
+  await pgctx.close();
+
   // ================= file:// =================
   console.log('\nOnboarding with more lifts');
   {

@@ -80,6 +80,10 @@ Open Profile from the person icon on Today. It starts with the Regoal logo and t
 
 <p align="center"><img src="img/profile.png" width="190" alt="Profile with the logo and tagline at the top"> <img src="img/profile-edit.png" width="190" alt="The Edit profile sheet"></p>
 
+## Progress: weight, measurements and food
+
+The Progress tab is where the numbers live. Body weight shows a 7-day average with every weigh-in as a grey dot and the average as a green line. **Measurements** lists the start, latest and six-month goal for each site you track, and once a site has two or more readings it also gets its own chart: a dot (and a line through them) for each reading, with your six-month goal as a dashed line. **Food, last 14 days** charts calories against your target, and below it, protein, carbs and fat each get the same treatment against their own targets, in grams; today is left out of all of these until it is finished, so a half-logged day cannot make the trend look worse than it is.
+
 ## Your photo trend
 
 Take the same five angles at your weekly check-in. The day is yours to set in **Profile** (Friday to begin with); Today asks for it that day, stays on it until all five are saved, and flags any week you missed. Check-ins are named by their date (Fri, 18 Sep), never "week 5": the Photos screen has one list of dates, and the trend, compare and downloads all show dates. Then:

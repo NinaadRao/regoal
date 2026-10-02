@@ -70,9 +70,16 @@
       const goodDir = tg ? (tg.target - start) : 0;
       const good = Math.abs(d) < 0.05 ? '' : (goodDir >= 0 ? d > 0 : d < 0) ? 'good' : 'coral';
       rows.push(h('div', { class: 'kv' }, h('span', null, label), h('b', null, U.fmtLen(start, set.lenUnit) + ' to ', U.fmtLen(now, set.lenUnit), tg ? h('span', { class: 'muted' }, '  (goal ' + U.fmtLen(tg.target, set.lenUnit) + ')') : null, ' ', good ? U.chip(signed(d) + ' ' + set.lenUnit, good) : null)));
+      const readings = st.meas.filter((m) => m.site === site).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+      if (readings.length > 1) {
+        const mxs = readings.map((m) => E.daysBetween(plan.startDate, m.date));
+        const series = [{ pts: readings.map((m, i) => ({ x: mxs[i], y: U.cmToUnit(m.cm, set.lenUnit) })), color: U.PAL.ink2, dots: true, r: 2.5 }];
+        if (tg) series.unshift({ pts: [{ x: mxs[0], y: U.cmToUnit(tg.target, set.lenUnit) }, { x: mxs[mxs.length - 1], y: U.cmToUnit(tg.target, set.lenUnit) }], color: U.PAL.acc, dash: '5 4', width: 2 });
+        rows.push(U.lineChart({ label: label + ' over time', xs: mxs, series, xLabel: (x) => U.shortDate(E.addDays(plan.startDate, x)), fmtY: (y) => U.num(y, 1) }));
+      }
     }
     cards.push(UI.card(h('div', { class: 'target-top' }, h('div', { class: 'ct' }, 'Measurements'), h('button', { class: 'chip line', type: 'button', onclick: logMeasSheet }, '+ Log')),
-      ...(rows.length ? rows : [h('div', { class: 'muted' }, 'No measurements yet.')]), h('div', { class: 'muted small' }, 'Start, latest and six-month goal in ' + set.lenUnit + '. Measure every two weeks; the tape matters more than the mirror.')));
+      ...(rows.length ? rows : [h('div', { class: 'muted' }, 'No measurements yet.')]), h('div', { class: 'muted small' }, 'Start, latest and six-month goal in ' + set.lenUnit + '. Measure every two weeks; the tape matters more than the mirror. A site with two or more readings gets a chart, with your six-month goal shown as a dashed line.')));
 
     // Food adherence, last 14 days
     const days = [];
@@ -80,9 +87,14 @@
     const logged = days.filter((x) => x.tot.n);
     if (logged.length) {
       const avgK = logged.reduce((a, x) => a + x.tot.kcal, 0) / logged.length, avgP = logged.reduce((a, x) => a + x.tot.protein, 0) / logged.length;
+      const macroChart = (label, key, target, color) => U.lineChart({ label: label + ' per day against target', xs: days.map((x) => x.x), series: [{ pts: days.map((x) => ({ x: x.x, y: target })), color: U.PAL.acc, dash: '5 4', width: 2 }, { pts: logged.map((x) => ({ x: x.x, y: x.tot[key] })), color, dots: true, line: false }], xLabel: (x) => U.shortDate(E.addDays(t, x - 14)), fmtY: (y) => U.num(y, 0) });
       cards.push(UI.card(h('div', { class: 'ct' }, 'Food, last 14 days'), h('div', { class: 'muted small' }, 'Today is left out until it is finished.'),
         U.lineChart({ label: 'Calories per day against target', xs: days.map((x) => x.x), series: [{ pts: days.map((x) => ({ x: x.x, y: plan.kcal })), color: U.PAL.acc, dash: '5 4', width: 2 }, { pts: logged.map((x) => ({ x: x.x, y: x.tot.kcal })), color: U.PAL.cool, dots: true, line: false }], xLabel: (x) => U.shortDate(E.addDays(t, x - 14)), fmtY: (y) => U.num(y, 0) }),
-        h('div', { class: 'statgrid' }, h('div', { class: 'stat' }, h('b', null, U.withCommas(avgK)), h('span', null, 'avg kcal')), h('div', { class: 'stat' }, h('b', null, Math.round(avgP) + ' g'), h('span', null, 'avg protein')), h('div', { class: 'stat' }, h('b', null, logged.length + '/14'), h('span', null, 'days logged')))));
+        h('div', { class: 'statgrid' }, h('div', { class: 'stat' }, h('b', null, U.withCommas(avgK)), h('span', null, 'avg kcal')), h('div', { class: 'stat' }, h('b', null, Math.round(avgP) + ' g'), h('span', null, 'avg protein')), h('div', { class: 'stat' }, h('b', null, logged.length + '/14'), h('span', null, 'days logged'))),
+        h('div', { class: 'muted small' }, 'Protein, carbs and fat against your plan’s targets, in grams.'),
+        macroChart('Protein', 'protein', plan.protein, U.PAL.cool),
+        macroChart('Carbs', 'carbs', plan.carbs, U.PAL.ink2),
+        macroChart('Fat', 'fat', plan.fat, U.PAL.coral)));
     }
 
     // Lifts
