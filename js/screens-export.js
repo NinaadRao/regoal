@@ -109,6 +109,8 @@
     const aligns = o.aligns || {};
     const A = { blob: ma.blob, label: U.longDate(o.a.date), align: aligns.a || E.photoAlignFor(Store.getState(), o.a.photo.id) };
     const B = { blob: mb.blob, label: U.longDate(o.b.date), align: aligns.b || E.photoAlignFor(Store.getState(), o.b.photo.id) };
+    // TEMP DEBUG: tracking down a report that the download doesn't reflect the live-screen alignment. Remove once found.
+    U.toast('DEBUG A.align=' + JSON.stringify(A.align) + ' B.align=' + JSON.stringify(B.align));
     const build = (scale) => MediaOut.composeComparison({ a: A, b: B, layout: opt.layout, format: scale ? 'jpeg' : opt.format, labels: opt.labels, rows: opt.table ? o.rows : null, head: [U.shortDate(o.a.date), U.shortDate(o.b.date)], pos: o.pos, blend: o.blend, scale });
     const box = h('div', { class: 'stack' });
     const urls = [];
