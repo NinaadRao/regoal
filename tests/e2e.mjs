@@ -1633,6 +1633,15 @@ async function main() {
     await tpage.getByRole('radio', { name: 'Side by side' }).click();
     await tpage.getByRole('button', { name: 'Align photos' }).click();
     eq(await tpage.getByRole('radio', { name: 'Before' }).count(), 0, 'side by side needs no Before/After picker: both photos are directly draggable');
+    // each photo gets its own zoom buttons too, not just drag (side by side has no scroll wheel on a touch screen)
+    const scalesBefore = await tpage.evaluate(() => Object.fromEntries(Object.entries(Store.getState().photoAligns).map(([k, v]) => [k, v.scale])));
+    await tpage.getByRole('button', { name: 'Zoom in Before', exact: true }).click();
+    await tpage.getByRole('button', { name: 'Zoom in After', exact: true }).click();
+    await tpage.getByRole('button', { name: 'Zoom in After', exact: true }).click();
+    await tpage.waitForFunction((prev) => Object.entries(Store.getState().photoAligns).every(([k, v]) => v.scale > (prev[k] || 1)), scalesBefore);
+    const scalesAfter = await tpage.evaluate(() => Store.getState().photoAligns);
+    const ids = Object.keys(scalesAfter);
+    ok(ids.length === 2 && scalesAfter[ids[0]].scale !== scalesAfter[ids[1]].scale, 'Before and After were zoomed by different amounts, independently: ' + JSON.stringify(scalesAfter));
     await tpage.getByRole('button', { name: 'Reset both' }).click();
     await tpage.waitForFunction(() => Object.values(Store.getState().photoAligns).every((a) => a.scale === 1 && a.dx === 0 && a.dy === 0));
     await tpage.getByRole('button', { name: 'Done aligning' }).click();

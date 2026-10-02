@@ -391,12 +391,20 @@
       if (!CMP.aligning) return;
       alignCtl.appendChild(h('div', { class: 'row' }, UI.btn('Auto-align with AI', { kind: 'quiet', onClick: () => autoAlignSheet(ca, cb) })));
       if (CMP.mode === 'side') {
+        const draftA = draftFor(ca.photo.id), draftB = draftFor(cb.photo.id);
+        const zoomPair = (label, draft) => h('div', { class: 'row space' },
+          h('span', { class: 'muted small' }, label),
+          h('div', { class: 'row' },
+            h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out ' + label, onclick: () => { zoomBy(draft, 1 / 1.15); commitAlign(draft.id, draft); redraw(); } }, '−'),
+            h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in ' + label, onclick: () => { zoomBy(draft, 1.15); commitAlign(draft.id, draft); redraw(); } }, '+')));
+        alignCtl.appendChild(zoomPair('Before', draftA));
+        alignCtl.appendChild(zoomPair('After', draftB));
         const resetBoth = () => {
           for (const c of [ca, cb]) { const d = draftFor(c.photo.id); d.dx = 0; d.dy = 0; d.scale = 1; commitAlign(d.id, d); }
           redraw();
         };
         alignCtl.appendChild(h('div', { class: 'row' }, h('button', { type: 'button', class: 'chip line', onclick: resetBoth }, 'Reset both')));
-        alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or send both to AI for a suggested fit. Scroll or pinch over a photo to zoom it.'));
+        alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or use the +/− above to zoom it. Send both to AI for a suggested fit.'));
       } else {
         const pickSeg = UI.seg({ options: [{ value: 'a', label: 'Before' }, { value: 'b', label: 'After' }], value: CMP.pick, onChange: (v) => { CMP.pick = v; redraw(); } });
         const picked = CMP.pick === 'a' ? ca : cb, draft = draftFor(picked.photo.id);
