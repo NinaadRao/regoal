@@ -30,7 +30,7 @@ A private, local-first tracker for lifts, workouts and sport, food, body weight,
 <p align="center">
   <img src="docs/img/progress.png" width="190" alt="Progress: weight trend and measurements against goals">
   <img src="docs/img/checkin.png" width="190" alt="Weekly photo check-in: pick a check-in by its date, then add the five angles">
-  <img src="docs/img/photo-compare.png" width="190" alt="Compare: any two check-ins with a slider">
+  <img src="docs/img/photo-compare.png" width="190" alt="Compare: any two check-ins side by side">
   <img src="docs/img/profile.png" width="190" alt="Profile: the Regoal logo and tagline, your name and basics (editable), your plan, and the weekly check-in day">
 </p>
 <p align="center">

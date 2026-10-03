@@ -9,7 +9,7 @@
   const Screens = root.Screens = root.Screens || {};
 
   const T = { angle: null, week: null, reveal: false, speed: 1, aligning: false };     // trend screen, kept while you move around
-  const CMP = { angle: null, a: null, b: null, mode: 'slider', pos: 0.5, blend: 0.5, reveal: false, aligning: false, pick: 'a' };
+  const CMP = { angle: null, a: null, b: null, reveal: false, aligning: false };
   const SPEEDS = [1, 2, 0.5];
   let urls = [], gen = 0, timer = null;
 
@@ -60,7 +60,7 @@
   // Binds pan-drag and wheel/pinch-zoom to `img`. `draft` is an { id, dx, dy, scale } object the caller
   // owns and keeps current for whichever photo `img` is showing; `active()` gates the gesture so the
   // same wiring can sit inert until align mode is switched on, and stays out of the way of other drags
-  // (like the compare slider's reveal handle) when it is off.
+  // (like Trend's scrub bar) when it is off.
   function wireAlign(img, draft, active) {
     let down = false, sx = 0, sy = 0, startDx = 0, startDy = 0, w = 1, hh = 1;
     img.addEventListener('pointerdown', (e) => {
@@ -305,7 +305,6 @@
         ...have.map((c) => h('option', { value: String(c.week), selected: c.week === CMP[which] }, U.longDate(c.date))));
       return h('label', { class: 'field flex' }, h('span', { class: 'lab' }, label), h('span', { class: 'selbox' }, s));
     };
-    const modeSeg = UI.seg({ options: [{ value: 'side', label: 'Side by side' }, { value: 'slider', label: 'Slider' }, { value: 'overlay', label: 'Overlay' }], value: CMP.mode, onChange: (v) => { CMP.mode = v; redraw(); } });
     const stageBox = h('div', { class: 'cmpwrap' });
     const help = h('div', { class: 'muted small' });
     const tableBox = h('div', null);
@@ -313,17 +312,17 @@
     const foot = h('div', { class: 'foot' });
     let loaded = false;
 
-    const pill = (t, side) => h('span', { class: 'cmplabel ' + side }, t);
+    const pill = (t) => h('span', { class: 'cmplabel' }, t);
     const photo = (w, cls) => { const im = h('img', { class: cls || '', alt: angle + ', ' + wk(w) }); const u = urlByWeek[w]; if (u) im.src = u; return im; };
 
     // alignment: drag to pan, wheel/pinch or +/- to zoom — per photo, remembered next time. Live drafts are
     // kept here (not re-read from `st`, which is a stale snapshot) so a drag isn't undone by the next redraw.
     const liveDrafts = Object.create(null);
     const draftFor = (id) => liveDrafts[id] || (liveDrafts[id] = Object.assign({ id }, E.photoAlignFor(st, id)));
-    function photoAligned(w, cls, pickKey) {
+    function photoAligned(w, cls) {
       const c = byWeek(w), im = photo(w, cls), draft = draftFor(c.photo.id);
       applyAlign(im, draft);
-      const active = () => CMP.aligning && (pickKey == null || CMP.pick === pickKey);
+      const active = () => CMP.aligning;
       im.style.touchAction = active() ? 'none' : '';
       wireAlign(im, draft, active);
       return im;
@@ -372,7 +371,7 @@
         const v = state.ai.value, draft = draftFor(cb.photo.id);
         before = { dx: draft.dx, dy: draft.dy, scale: draft.scale };
         Object.assign(draft, { dx: v.dx, dy: v.dy, scale: v.scale });
-        CMP.aligning = true; CMP.pick = 'b';
+        CMP.aligning = true;
         redraw();
         const okBtn = h('button', { type: 'button', class: 'btn primary block' }, 'Use this');
         okBtn.addEventListener('click', () => { applied = true; commitAlign(draft.id, draft); close(); });
@@ -390,60 +389,27 @@
       alignCtl.appendChild(h('div', { class: 'row alignrow' }, h('button', { type: 'button', class: 'chip line', onclick: () => { CMP.aligning = !CMP.aligning; redraw(); } }, CMP.aligning ? 'Done aligning' : 'Align photos')));
       if (!CMP.aligning) return;
       alignCtl.appendChild(h('div', { class: 'row' }, UI.btn('Auto-align with AI', { kind: 'quiet', onClick: () => autoAlignSheet(ca, cb) })));
-      if (CMP.mode === 'side') {
-        const draftA = draftFor(ca.photo.id), draftB = draftFor(cb.photo.id);
-        const zoomPair = (label, draft) => h('div', { class: 'row space' },
-          h('span', { class: 'muted small' }, label),
-          h('div', { class: 'row' },
-            h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out ' + label, onclick: () => { zoomBy(draft, 1 / 1.15); commitAlign(draft.id, draft); redraw(); } }, '−'),
-            h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in ' + label, onclick: () => { zoomBy(draft, 1.15); commitAlign(draft.id, draft); redraw(); } }, '+')));
-        alignCtl.appendChild(zoomPair('Before', draftA));
-        alignCtl.appendChild(zoomPair('After', draftB));
-        const resetBoth = () => {
-          for (const c of [ca, cb]) { const d = draftFor(c.photo.id); d.dx = 0; d.dy = 0; d.scale = 1; commitAlign(d.id, d); }
-          redraw();
-        };
-        alignCtl.appendChild(h('div', { class: 'row' }, h('button', { type: 'button', class: 'chip line', onclick: resetBoth }, 'Reset both')));
-        alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or use the +/− above to zoom it. Send both to AI for a suggested fit.'));
-      } else {
-        const pickSeg = UI.seg({ options: [{ value: 'a', label: 'Before' }, { value: 'b', label: 'After' }], value: CMP.pick, onChange: (v) => { CMP.pick = v; redraw(); } });
-        const picked = CMP.pick === 'a' ? ca : cb, draft = draftFor(picked.photo.id);
-        const zoom = (mult) => { zoomBy(draft, mult); commitAlign(draft.id, draft); redraw(); };
-        const reset = () => { draft.dx = 0; draft.dy = 0; draft.scale = 1; commitAlign(draft.id, draft); redraw(); };
-        alignCtl.appendChild(h('div', { class: 'row' }, pickSeg));
-        alignCtl.appendChild(h('div', { class: 'row' },
-          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out', onclick: () => zoom(1 / 1.15) }, '−'),
-          h('button', { type: 'button', class: 'chip line', onclick: reset }, 'Reset'),
-          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in', onclick: () => zoom(1.15) }, '+')));
-        alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag the ' + (CMP.pick === 'a' ? 'Before' : 'After') + ' photo to line it up, or use +/−.'));
-      }
+      const draftA = draftFor(ca.photo.id), draftB = draftFor(cb.photo.id);
+      const zoomPair = (label, draft) => h('div', { class: 'row space' },
+        h('span', { class: 'muted small' }, label),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out ' + label, onclick: () => { zoomBy(draft, 1 / 1.15); commitAlign(draft.id, draft); redraw(); } }, '−'),
+          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in ' + label, onclick: () => { zoomBy(draft, 1.15); commitAlign(draft.id, draft); redraw(); } }, '+')));
+      alignCtl.appendChild(zoomPair('Before', draftA));
+      alignCtl.appendChild(zoomPair('After', draftB));
+      const resetBoth = () => {
+        for (const c of [ca, cb]) { const d = draftFor(c.photo.id); d.dx = 0; d.dy = 0; d.scale = 1; commitAlign(d.id, d); }
+        redraw();
+      };
+      alignCtl.appendChild(h('div', { class: 'row' }, h('button', { type: 'button', class: 'chip line', onclick: resetBoth }, 'Reset both')));
+      alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or use the +/− above to zoom it. Send both to AI for a suggested fit.'));
     }
 
     function redraw() {
       const ca = byWeek(CMP.a), cb = byWeek(CMP.b), hidden = blurOn && !CMP.reveal;
       U.clear(stageBox);
-      const la = U.longDate(ca.date), lb = U.longDate(cb.date);
-      if (CMP.mode === 'side') {
-        stageBox.appendChild(h('div', { class: 'cmp-side' + (hidden ? ' blur' : '') }, h('div', { class: 'cmp-cell' }, photoAligned(ca.week, null, null), pill(wk(ca.week), 'l')), h('div', { class: 'cmp-cell' }, photoAligned(cb.week, null, null), pill(wk(cb.week), 'l'))));
-        help.textContent = 'Same pose, same light. Look at the same spots on both.';
-      } else if (CMP.mode === 'slider') {
-        const clip = h('div', { class: 'cmp-clip' }, photoAligned(ca.week, null, 'a'));
-        const handle = h('div', { class: 'cmp-handle', role: 'slider', tabindex: '0', 'aria-label': 'Compare position', 'aria-valuemin': '0', 'aria-valuemax': '100' }, h('span', { class: 'knob2' }, U.icon('swap', 20)));
-        const box = h('div', { class: 'cmp-slider' + (hidden ? ' blur' : ''), 'data-testid': 'cmp-slider' }, photoAligned(cb.week, null, 'b'), clip, handle, pill(la, 'l'), pill(lb, 'r'));
-        const set2 = (p) => { CMP.pos = clamp(p, 0, 1); clip.style.clipPath = 'inset(0 ' + (100 - CMP.pos * 100) + '% 0 0)'; handle.style.left = CMP.pos * 100 + '%'; handle.setAttribute('aria-valuenow', String(Math.round(CMP.pos * 100))); };
-        if (!CMP.aligning) dragX(box, (e) => { const r = box.getBoundingClientRect(); set2((e.clientX - r.left) / r.width); });
-        handle.addEventListener('keydown', (e) => { const step = e.key === 'ArrowLeft' ? -0.05 : e.key === 'ArrowRight' ? 0.05 : 0; if (!step) return; e.preventDefault(); set2(CMP.pos + step); });
-        set2(CMP.pos);
-        stageBox.appendChild(box);
-        help.textContent = CMP.aligning ? 'Dragging the picked photo lines it up instead of moving the reveal line.' : 'Drag the handle across. Overlay blends the two so you can line up your pose.';
-      } else {
-        const over = photoAligned(cb.week, 'cmp-over', 'b');
-        over.style.opacity = String(CMP.blend);
-        const box = h('div', { class: 'cmp-slider' + (hidden ? ' blur' : '') }, photoAligned(ca.week, null, 'a'), over, pill(la, 'l'), pill(lb, 'r'));
-        const range = h('input', { type: 'range', min: '0', max: '100', value: String(Math.round(CMP.blend * 100)), class: 'range', 'aria-label': 'Blend', oninput: () => { CMP.blend = Number(range.value) / 100; over.style.opacity = String(CMP.blend); } });
-        stageBox.appendChild(box); stageBox.appendChild(h('div', { class: 'blendrow' }, h('span', { class: 'muted small' }, wk(ca.week)), range, h('span', { class: 'muted small' }, wk(cb.week))));
-        help.textContent = CMP.aligning ? 'Dragging the picked photo lines it up. The blend slider still works either way.' : 'Slide to fade from the first check-in to the second. Line up head and feet.';
-      }
+      stageBox.appendChild(h('div', { class: 'cmp-side' + (hidden ? ' blur' : '') }, h('div', { class: 'cmp-cell' }, photoAligned(ca.week, null), pill(wk(ca.week))), h('div', { class: 'cmp-cell' }, photoAligned(cb.week, null), pill(wk(cb.week)))));
+      help.textContent = 'Same pose, same light. Look at the same spots on both.';
       if (blurOn) { badge.textContent = hidden ? 'Blurred · tap to reveal' : 'Tap to blur'; stageBox.appendChild(badge); }
       if (loaded && (!urlByWeek[ca.week] || !urlByWeek[cb.week])) help.textContent = 'One of these photos is not on this device (it was left out of the backup you restored).';
       alignPanel(ca, cb);
@@ -456,14 +422,14 @@
           ...(rows.length ? rows.map((r) => h('div', { class: 'cmprow' }, h('b', null, r.name), h('span', null, r.a), h('b', null, r.b), h('b', { class: r.tone || 'muted' }, r.change))) : [h('div', { class: 'muted' }, 'Log a weight or measurement near these dates to see the change here.')]))));
       const different = ca.week !== cb.week;
       U.clear(foot);
-      U.put(foot, UI.btn('Download image', { icon: 'download', disabled: !different, onClick: () => Screens._.imageSheet({ angle, a: ca, b: cb, rows, mode: CMP.mode, pos: CMP.pos, blend: CMP.blend, aligns: { a: draftFor(ca.photo.id), b: draftFor(cb.photo.id) } }) }),
+      U.put(foot, UI.btn('Download image', { icon: 'download', disabled: !different, onClick: () => Screens._.imageSheet({ angle, a: ca, b: cb, rows, aligns: { a: draftFor(ca.photo.id), b: draftFor(cb.photo.id) } }) }),
         different ? null : h('div', { class: 'muted small centered' }, 'Pick two different check-ins to download a comparison.'));
     }
 
     redraw();
     loadUrls(have, urlByWeek, myGen).then((ok) => { if (ok) { loaded = true; redraw(); } });
 
-    return UI.page(head, UI.scroller(h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), modeSeg, stageBox, alignCtl, help, tableBox,
+    return UI.page(head, UI.scroller(h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), stageBox, alignCtl, help, tableBox,
       h('div', { class: 'muted small' }, 'Photos stay on this device.' + (blurOn ? ' Blur is on until you reveal them.' : ''))), foot);
   };
 

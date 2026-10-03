@@ -1589,50 +1589,31 @@ async function main() {
     await tpage.getByRole('button', { name: 'Done aligning' }).click();
   });
 
-  await step('compare: pick any two dates; slider, side by side and overlay; numbers with the change', async () => {
+  await step('compare: pick any two dates, side by side; numbers with the change', async () => {
     await tpage.getByRole('link', { name: 'Compare two dates' }).click();
-    await tpage.waitForSelector('.cmp-slider');
+    await tpage.waitForSelector('.cmp-side');
     await noWeekWords('compare');
     eq(await tpage.getByLabel('Before').inputValue(), '1'); eq(await tpage.getByLabel('After').inputValue(), '9');
-    const handle = tpage.locator('.cmp-handle');
-    eq(await handle.getAttribute('aria-valuenow'), '50');
-    await handle.focus(); await tpage.keyboard.press('ArrowRight');
-    eq(await handle.getAttribute('aria-valuenow'), '55');
-    const box = await tpage.locator('.cmp-slider').boundingBox();
-    await tpage.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2); await tpage.mouse.down(); await tpage.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2); await tpage.mouse.up();
-    ok(Number(await handle.getAttribute('aria-valuenow')) >= 75, 'dragging moves the handle');
+    eq(await tpage.locator('.cmp-side img').count(), 2);
     const rows = await tpage.locator('.cmprow:not(.head)').allInnerTexts();
     ok(rows.length === 3 && /Weight/.test(rows[0]) && /82\.0 kg/.test(rows[0]) && /80\.2 kg/.test(rows[0]) && /-1\.8 kg/.test(rows[0]), 'weight row: ' + rows[0]);
     ok(/Waist/.test(rows[1]) && /-1\.8 cm/.test(rows[1]), 'waist row: ' + rows[1]);
     ok(/Chest/.test(rows[2]) && /\+1\.2 cm/.test(rows[2]), 'chest row: ' + rows[2]);
-    await tpage.getByRole('radio', { name: 'Side by side' }).click();
-    eq(await tpage.locator('.cmp-side img').count(), 2);
-    await tpage.getByRole('radio', { name: 'Overlay' }).click();
-    await tpage.getByLabel('Blend').fill('20');
-    eq(await tpage.locator('.cmp-over').evaluate((el) => el.style.opacity), '0.2');
     await tpage.getByLabel('After').selectOption('5'); await tpage.getByLabel('Before').selectOption('5');
     ok(await tpage.getByRole('button', { name: 'Download image' }).isDisabled(), 'the same check-in twice cannot be downloaded');
     await tpage.getByLabel('Before').selectOption('1'); await tpage.getByLabel('After').selectOption('9');
   });
 
-  await step('compare: Align photos pans/zooms the picked photo instead of moving the reveal line, and Side by side aligns both independently', async () => {
-    await tpage.getByRole('radio', { name: 'Slider' }).click();
-    await tpage.getByRole('button', { name: 'Align photos' }).click();
-    const handle = tpage.locator('.cmp-handle');
-    const before = await handle.getAttribute('aria-valuenow');
-    const box = await tpage.locator('.cmp-slider').boundingBox();
-    await tpage.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2); await tpage.mouse.down();
-    await tpage.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 5 }); await tpage.mouse.up();
-    eq(await handle.getAttribute('aria-valuenow'), before, 'aligning suppresses the reveal-position drag');
-    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length > 0);
-    await tpage.getByRole('radio', { name: 'After' }).click();
-    await tpage.getByRole('button', { name: 'Zoom in' }).click();
-    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length >= 2);
-    eq(await tpage.evaluate(() => Object.keys(Store.getState().photoAligns).length), 2, 'before and after each got their own saved alignment');
-    await tpage.getByRole('button', { name: 'Done aligning' }).click();
-    await tpage.getByRole('radio', { name: 'Side by side' }).click();
+  await step('compare: Align photos aligns both photos independently, by drag and by zoom buttons', async () => {
     await tpage.getByRole('button', { name: 'Align photos' }).click();
     eq(await tpage.getByRole('radio', { name: 'Before' }).count(), 0, 'side by side needs no Before/After picker: both photos are directly draggable');
+    const cellImg = tpage.locator('.cmp-side .cmp-cell img').first();
+    const cbox = await cellImg.boundingBox();
+    await tpage.mouse.move(cbox.x + cbox.width / 2, cbox.y + cbox.height / 2);
+    await tpage.mouse.down();
+    await tpage.mouse.move(cbox.x + cbox.width / 2 + 30, cbox.y + cbox.height / 2 + 20, { steps: 5 });
+    await tpage.mouse.up();
+    await tpage.waitForFunction(() => Object.keys(Store.getState().photoAligns).length > 0);
     // each photo gets its own zoom buttons too, not just drag (side by side has no scroll wheel on a touch screen)
     const scalesBefore = await tpage.evaluate(() => Object.fromEntries(Object.entries(Store.getState().photoAligns).map(([k, v]) => [k, v.scale])));
     await tpage.getByRole('button', { name: 'Zoom in Before', exact: true }).click();
@@ -1685,7 +1666,6 @@ async function main() {
   mediaBefore = await tpage.evaluate(async () => (await Store.allMedia()).length);
 
   await step('download image: unblurred warning, PNG saved with a plain name, built and kept on this device only', async () => {
-    await tpage.getByRole('radio', { name: 'Side by side' }).click();
     await tpage.getByRole('button', { name: 'Download image' }).click();
     const sheet = tpage.locator('#sheets');
     await sheet.getByText('The saved file shows your photos unblurred').waitFor();
@@ -1706,19 +1686,15 @@ async function main() {
     eq(await tpage.locator('#sheets .sheet').count(), 0);
   });
 
-  await step('a saved JPEG is a plain re-drawn image with no camera or location block, in each layout', async () => {
+  await step('a saved JPEG is a plain re-drawn image with no camera or location block', async () => {
     const r = await tpage.evaluate(async () => {
       const st = Store.getState(), cis = Engine.checkIns(st, 'Front').filter((c) => c.photo);
       const a = (await Store.getMedia(cis[0].photo.id)).blob, b = (await Store.getMedia(cis[2].photo.id)).blob;
-      const out = [];
-      for (const layout of ['side', 'slider', 'overlay']) {
-        const blob = await MediaOut.composeComparison({ a: { blob: a, label: 'Fri, 4 Sep' }, b: { blob: b, label: 'Fri, 30 Oct' }, layout, format: 'jpeg', labels: true, rows: [{ name: 'Weight', a: '82.0 kg', b: '80.2 kg', change: '-1.8 kg', tone: '' }], head: ['Sep 4', 'Oct 30'] });
-        const u8 = new Uint8Array(await blob.arrayBuffer());
-        out.push({ layout, type: blob.type, soi: [u8[0], u8[1]], exif: new TextDecoder('latin1').decode(u8.subarray(0, 400)).includes('Exif') });
-      }
-      return out;
+      const blob = await MediaOut.composeComparison({ a: { blob: a, label: 'Fri, 4 Sep' }, b: { blob: b, label: 'Fri, 30 Oct' }, format: 'jpeg', labels: true, rows: [{ name: 'Weight', a: '82.0 kg', b: '80.2 kg', change: '-1.8 kg', tone: '' }], head: ['Sep 4', 'Oct 30'] });
+      const u8 = new Uint8Array(await blob.arrayBuffer());
+      return { type: blob.type, soi: [u8[0], u8[1]], exif: new TextDecoder('latin1').decode(u8.subarray(0, 400)).includes('Exif') };
     });
-    for (const x of r) { eq(x.type, 'image/jpeg', x.layout); eq(x.soi, [0xff, 0xd8], x.layout); ok(!x.exif, 'no Exif in ' + x.layout); }
+    eq(r.type, 'image/jpeg'); eq(r.soi, [0xff, 0xd8]); ok(!r.exif, 'no Exif');
   });
 
   await step('a saved alignment actually changes what composeComparison and stillFrame draw, not just an auto-centred crop', async () => {
@@ -1727,7 +1703,7 @@ async function main() {
       const blob = (await Store.getMedia(cis[0].photo.id)).blob;
       const align = { dx: 0.8, dy: 0.8, scale: 3 };
       async function compareBytes(a) {
-        const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align: a }, b: { blob, label: 'B' }, layout: 'side', format: 'png', labels: false, rows: null, head: ['', ''] });
+        const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align: a }, b: { blob, label: 'B' }, format: 'png', labels: false, rows: null, head: ['', ''] });
         return Array.from(new Uint8Array(await out.arrayBuffer()));
       }
       const base = await compareBytes(null), shifted = await compareBytes(align);
@@ -1758,7 +1734,7 @@ async function main() {
       x.fillStyle = '#ffff00'; x.fillRect(300, 400, 300, 400); // bottom-right: yellow
       const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
       const align = { dx: 0.345, dy: 0.43, scale: 1.322 }; // pan right + down, zoomed in
-      const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align }, b: { blob, label: 'B', align: { dx: 0, dy: 0, scale: 1 } }, layout: 'side', format: 'png', labels: false, rows: null, head: ['', ''] });
+      const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align }, b: { blob, label: 'B', align: { dx: 0, dy: 0, scale: 1 } }, format: 'png', labels: false, rows: null, head: ['', ''] });
       const url = URL.createObjectURL(out);
       const img = new Image(); img.src = url; await new Promise((r) => { img.onload = r; });
       const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight;

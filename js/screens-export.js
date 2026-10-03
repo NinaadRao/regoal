@@ -100,16 +100,16 @@
   };
 
   // ---------- comparison image ----------
-  // o: { angle, a, b (check-ins with a photo), rows, mode, pos, blend, aligns?: {a, b} (live drafts from Compare) }
+  // o: { angle, a, b (check-ins with a photo), rows, aligns?: {a, b} (live drafts from Compare) }
   Screens._.imageSheet = async function (o) {
     const set = Store.getSettings();
     const ma = await Store.getMedia(o.a.photo.id), mb = await Store.getMedia(o.b.photo.id);
     if (!ma || !mb) { U.toast('One of those photos is not on this device.', 'warn'); return; }
-    const opt = { layout: 'side', format: 'jpeg', labels: true, table: o.rows.length > 0 };
+    const opt = { format: 'jpeg', labels: true, table: o.rows.length > 0 };
     const aligns = o.aligns || {};
     const A = { blob: ma.blob, label: U.longDate(o.a.date), align: aligns.a || E.photoAlignFor(Store.getState(), o.a.photo.id) };
     const B = { blob: mb.blob, label: U.longDate(o.b.date), align: aligns.b || E.photoAlignFor(Store.getState(), o.b.photo.id) };
-    const build = (scale) => MediaOut.composeComparison({ a: A, b: B, layout: opt.layout, format: scale ? 'jpeg' : opt.format, labels: opt.labels, rows: opt.table ? o.rows : null, head: [U.shortDate(o.a.date), U.shortDate(o.b.date)], pos: o.pos, blend: o.blend, scale });
+    const build = (scale) => MediaOut.composeComparison({ a: A, b: B, format: scale ? 'jpeg' : opt.format, labels: opt.labels, rows: opt.table ? o.rows : null, head: [U.shortDate(o.a.date), U.shortDate(o.b.date)], scale });
     const box = h('div', { class: 'stack' });
     const urls = [];
     let tok = 0, prevUrl = null, closeSheet = null;
@@ -128,11 +128,10 @@
           U.clear(prev); prev.appendChild(h('img', { src: prevUrl, alt: '' }));
         } catch (e) { /* the preview is a bonus */ }
       };
-      const layout = UI.seg({ label: 'Layout', options: [{ value: 'side', label: 'Side by side' }, { value: 'slider', label: 'Slider view' }, { value: 'overlay', label: 'Overlay' }], value: opt.layout, onChange: (v) => { opt.layout = v; refresh(); } });
       const type = UI.seg({ label: 'File type', options: [{ value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }], value: opt.format, onChange: (v) => { opt.format = v; } });
       U.put(box,
         h('div', { class: 'target-top' }, h('span', { class: 'chip line' }, o.angle + ' · ' + U.shortDate(o.a.date) + ' vs ' + U.shortDate(o.b.date)), set.blurPhotos ? h('span', { class: 'muted small' }, 'Preview is blurred') : null),
-        prev, layout, type,
+        prev, type,
         UI.toggleRow('Date labels', 'Shown on the image', opt.labels, (v) => { opt.labels = v; refresh(); }),
         o.rows.length ? UI.toggleRow('Measurements table', 'Added under the photos', opt.table, (v) => { opt.table = v; refresh(); }) : null,
         privacyNote(),

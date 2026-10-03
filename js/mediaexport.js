@@ -68,35 +68,24 @@
   }
 
   // ---------- comparison image ----------
-  // o: { a, b: {blob, label, align?: {dx,dy,scale}}, layout: 'side'|'slider'|'overlay', format: 'jpeg'|'png', labels,
-  //      rows: [{name, a, b, change, tone}]|null, head: [labelA, labelB], pos (0..1, slider), blend (0..1, overlay), scale }
+  // o: { a, b: {blob, label, align?: {dx,dy,scale}}, format: 'jpeg'|'png', labels,
+  //      rows: [{name, a, b, change, tone}]|null, head: [labelA, labelB], scale }
   async function composeComparison(o) {
     await fontsReady();
     const A = await decode(o.a.blob), B = await decode(o.b.blob);
     try {
-      const k = o.scale || 1, single = o.layout !== 'side';
-      const cw = Math.round((single ? 1080 : 900) * k), ch = Math.round(cw * 4 / 3), gap = single ? 0 : Math.max(2, Math.round(8 * k));
-      const W = single ? cw : cw * 2 + gap;
+      const k = o.scale || 1;
+      const cw = Math.round(900 * k), ch = Math.round(cw * 4 / 3), gap = Math.max(2, Math.round(8 * k));
+      const W = cw * 2 + gap;
       const rows = o.rows && o.rows.length ? o.rows : null;
       const rowH = Math.round(W * 0.066), tableH = rows ? rowH * (rows.length + 1) + Math.round(W * 0.05) : 0;
       const cv = canvasOf(W, ch + tableH), ctx = cv.getContext('2d');
       ctx.fillStyle = C.chalk; ctx.fillRect(0, 0, cv.width, cv.height);
-      const pos = Math.max(0, Math.min(1, o.pos == null ? 0.5 : o.pos)), blend = Math.max(0, Math.min(1, o.blend == null ? 0.5 : o.blend));
       const alignA = o.a.align, alignB = o.b.align;
-      if (o.layout === 'side') { cover(ctx, A, 0, 0, cw, ch, null, alignA); cover(ctx, B, cw + gap, 0, cw, ch, null, alignB); }
-      else if (o.layout === 'slider') {
-        cover(ctx, B, 0, 0, cw, ch, null, alignB);
-        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, pos * cw, ch); ctx.clip(); cover(ctx, A, 0, 0, cw, ch, null, alignA); ctx.restore();
-        const x = pos * cw, lw = Math.max(2, 6 * k), r = 30 * k;
-        ctx.fillStyle = C.acc; ctx.fillRect(x - lw / 2, 0, lw, ch);
-        ctx.beginPath(); ctx.arc(x, ch / 2, r, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = C.chalk; ctx.lineWidth = Math.max(2, 5 * k); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        ctx.beginPath(); ctx.moveTo(x - 6 * k, ch / 2 - 10 * k); ctx.lineTo(x - 16 * k, ch / 2); ctx.lineTo(x - 6 * k, ch / 2 + 10 * k); ctx.moveTo(x + 6 * k, ch / 2 - 10 * k); ctx.lineTo(x + 16 * k, ch / 2); ctx.lineTo(x + 6 * k, ch / 2 + 10 * k); ctx.stroke();
-      } else { cover(ctx, A, 0, 0, cw, ch, null, alignA); cover(ctx, B, 0, 0, cw, ch, blend, alignB); }
+      cover(ctx, A, 0, 0, cw, ch, null, alignA); cover(ctx, B, cw + gap, 0, cw, ch, null, alignB);
       if (o.labels) {
-        const px = Math.round(W * (single ? 0.03 : 0.024)), m = Math.round(W * 0.02), ph = px * 1.9;
-        if (o.layout === 'side') { pill(ctx, o.a.label, m, ch - m - ph, px, 'left'); pill(ctx, o.b.label, cw + gap + m, ch - m - ph, px, 'left'); }
-        else { pill(ctx, o.a.label, m, ch - m - ph, px, 'left'); pill(ctx, o.b.label, W - m, ch - m - ph, px, 'right'); }
+        const px = Math.round(W * 0.024), m = Math.round(W * 0.02), ph = px * 1.9;
+        pill(ctx, o.a.label, m, ch - m - ph, px, 'left'); pill(ctx, o.b.label, cw + gap + m, ch - m - ph, px, 'left');
       }
       if (rows) {
         const pad = Math.round(W * 0.04), px = Math.round(rowH * 0.44), y0 = ch + Math.round(W * 0.025);
