@@ -388,24 +388,27 @@ test('exSwitchFor and project(): a switch applies only to its own date and id, a
   assert.equal(E.exSwitchFor(voided, '2026-01-06', 'acc_x'), null, 'voiding the switch removes it');
 });
 
-test('cleanPhotoAlign: rebuilds a drag/zoom alignment from a whitelist, clamping out-of-range numbers and refusing a bad id', () => {
-  const good = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 0.2, dy: -0.1, scale: 1.5 });
+test('cleanPhotoAlign: rebuilds a drag/zoom/straighten alignment from a whitelist, clamping out-of-range numbers and refusing a bad id', () => {
+  const good = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 0.2, dy: -0.1, scale: 1.5, rot: 3.5 });
   assert.equal(good.ok, true);
   assert.equal(good.value.id, 'p_3_front_abc123');
   assert.equal(good.value.dx, 0.2);
   assert.equal(good.value.dy, -0.1);
   assert.equal(good.value.scale, 1.5);
+  assert.equal(good.value.rot, 3.5);
 
-  const clamped = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 9, dy: -9, scale: 99 });
+  const clamped = E.cleanPhotoAlign({ id: 'p_3_front_abc123', dx: 9, dy: -9, scale: 99, rot: 999 });
   assert.equal(clamped.ok, true);
   assert.equal(clamped.value.dx, 1, 'dx is clamped to the [-1, 1] fraction range');
   assert.equal(clamped.value.dy, -1);
   assert.equal(clamped.value.scale, 4, 'scale is clamped to [1, 4]');
+  assert.equal(clamped.value.rot, 20, 'rot is clamped to [-20, 20] degrees');
 
   const dflt = E.cleanPhotoAlign({ id: 'p_3_front_abc123' });
   assert.equal(dflt.ok, true);
   assert.equal(dflt.value.dx, 0, 'a missing number falls back to the neutral default');
   assert.equal(dflt.value.scale, 1);
+  assert.equal(dflt.value.rot, 0);
 
   assert.equal(E.cleanPhotoAlign({ id: 'Not An Id!' }).ok, false, 'the id must be a plain media id');
   assert.equal(E.cleanPhotoAlign(null).ok, false);
@@ -420,7 +423,7 @@ test('photoAlignFor and project(): an alignment is keyed by photo id, defaults t
   ];
   const st = E.project(events);
   assert.equal(E.photoAlignFor(st, 'p_1_front_a').scale, 2);
-  assert.deepEqual(E.photoAlignFor(st, 'p_9_front_z'), { id: 'p_9_front_z', dx: 0, dy: 0, scale: 1 }, 'an unsaved photo gets the neutral default');
+  assert.deepEqual(E.photoAlignFor(st, 'p_9_front_z'), { id: 'p_9_front_z', dx: 0, dy: 0, scale: 1, rot: 0 }, 'an unsaved photo gets the neutral default');
   // A later save for the same photo overwrites, last-write-wins, rather than appending.
   const updated = E.project(events.concat([{ seq: 3, ts: 't', type: 'photo_aligned', data: { id: 'p_1_front_a', dx: 0, dy: 0, scale: 3 } }]));
   assert.equal(E.photoAlignFor(updated, 'p_1_front_a').scale, 3);

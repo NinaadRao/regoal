@@ -88,13 +88,15 @@
     if (logged.length) {
       const avgK = logged.reduce((a, x) => a + x.tot.kcal, 0) / logged.length, avgP = logged.reduce((a, x) => a + x.tot.protein, 0) / logged.length;
       const macroChart = (label, key, target, color) => U.lineChart({ label: label + ' per day against target', xs: days.map((x) => x.x), series: [{ pts: days.map((x) => ({ x: x.x, y: target })), color: U.PAL.acc, dash: '5 4', width: 2 }, { pts: logged.map((x) => ({ x: x.x, y: x.tot[key] })), color, dots: true, line: false }], xLabel: (x) => U.shortDate(E.addDays(t, x - 14)), fmtY: (y) => U.num(y, 0) });
+      const chartTitle = (label, color) => h('div', { class: 'row chart-title' }, h('span', { class: 'chart-dot', style: { background: color } }), h('span', { class: 'lab' }, label));
       cards.push(UI.card(h('div', { class: 'ct' }, 'Food, last 14 days'), h('div', { class: 'muted small' }, 'Today is left out until it is finished.'),
+        chartTitle('Calories', U.PAL.cool),
         U.lineChart({ label: 'Calories per day against target', xs: days.map((x) => x.x), series: [{ pts: days.map((x) => ({ x: x.x, y: plan.kcal })), color: U.PAL.acc, dash: '5 4', width: 2 }, { pts: logged.map((x) => ({ x: x.x, y: x.tot.kcal })), color: U.PAL.cool, dots: true, line: false }], xLabel: (x) => U.shortDate(E.addDays(t, x - 14)), fmtY: (y) => U.num(y, 0) }),
         h('div', { class: 'statgrid' }, h('div', { class: 'stat' }, h('b', null, U.withCommas(avgK)), h('span', null, 'avg kcal')), h('div', { class: 'stat' }, h('b', null, Math.round(avgP) + ' g'), h('span', null, 'avg protein')), h('div', { class: 'stat' }, h('b', null, logged.length + '/14'), h('span', null, 'days logged'))),
-        h('div', { class: 'muted small' }, 'Protein, carbs and fat against your plan’s targets, in grams.'),
-        macroChart('Protein', 'protein', plan.protein, U.PAL.cool),
-        macroChart('Carbs', 'carbs', plan.carbs, U.PAL.ink2),
-        macroChart('Fat', 'fat', plan.fat, U.PAL.coral)));
+        h('div', { class: 'muted small' }, 'Protein, carbs and fat against your plan’s targets, in grams. Dashed line: target.'),
+        chartTitle('Protein', U.PAL.cool), macroChart('Protein', 'protein', plan.protein, U.PAL.cool),
+        chartTitle('Carbs', U.PAL.ink2), macroChart('Carbs', 'carbs', plan.carbs, U.PAL.ink2),
+        chartTitle('Fat', U.PAL.coral), macroChart('Fat', 'fat', plan.fat, U.PAL.coral)));
     }
 
     // Lifts

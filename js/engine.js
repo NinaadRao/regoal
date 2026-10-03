@@ -218,9 +218,10 @@
   // The active switch (if any) for one exercise on one date, or null.
   function exSwitchFor(state, date, from) { return (state.exSwitches && state.exSwitches[date + '|' + from]) || null; }
 
-  // A manual (or AI-suggested, always user-confirmed) pan/zoom alignment saved against one photo, so Compare and
-  // Trend can line it up with another check-in without re-doing the drag every time. dx/dy are fractions of the
-  // photo's own width/height (so they stay meaningful at any stage size); scale is a simple zoom factor.
+  // A manual (or AI-suggested, always user-confirmed) pan/zoom/straighten alignment saved against one photo, so
+  // Compare and Trend can line it up with another check-in without re-doing the drag every time. dx/dy are
+  // fractions of the photo's own width/height (so they stay meaningful at any stage size); scale is a simple
+  // zoom factor; rot is a small straightening rotation in degrees (manual only — AI suggestions never set it).
   function cleanPhotoAlign(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw) || hasBadKeys(raw, 0)) return { ok: false, errors: ['That is not an alignment.'] };
     const id = String(raw.id || '');
@@ -229,10 +230,11 @@
     const dx = clean(num(raw.dx, -1, 1, 0));
     const dy = clean(num(raw.dy, -1, 1, 0));
     const scale = clean(num(raw.scale, 1, 4, 1));
-    return { ok: true, value: { id, dx, dy, scale } };
+    const rot = clean(num(raw.rot, -20, 20, 0));
+    return { ok: true, value: { id, dx, dy, scale, rot } };
   }
   // The saved alignment for one photo (by media id), or a neutral default if none was ever saved.
-  function photoAlignFor(state, id) { return (state.photoAligns && state.photoAligns[id]) || { id, dx: 0, dy: 0, scale: 1 }; }
+  function photoAlignFor(state, id) { return (state.photoAligns && state.photoAligns[id]) || { id, dx: 0, dy: 0, scale: 1, rot: 0 }; }
 
   // Clamps an AI-suggested pan/zoom to the same sane ranges as a saved alignment, with no id required —
   // the caller already knows which photo it is for. Always shown to the user to accept or change, never

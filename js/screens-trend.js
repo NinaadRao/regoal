@@ -47,16 +47,17 @@
     const up = () => { down = false; };
     el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   }
-  // ---------- manual photo alignment (drag to pan, wheel/pinch or +/- to zoom) ----------
+  // ---------- manual photo alignment (drag to pan, wheel/pinch or +/- to zoom, +/- to straighten) ----------
   // Not all photos line up the same way, so Trend and Compare let you nudge one into place; the result
   // is saved per photo (debounced, so a drag doesn't spam the event log) and remembered next time.
   const alignTimers = Object.create(null);
   function commitAlign(id, a) {
     clearTimeout(alignTimers[id]);
-    alignTimers[id] = setTimeout(() => { Store.append('photo_aligned', { id, dx: a.dx, dy: a.dy, scale: a.scale }); }, 500);
+    alignTimers[id] = setTimeout(() => { Store.append('photo_aligned', { id, dx: a.dx, dy: a.dy, scale: a.scale, rot: a.rot || 0 }); }, 500);
   }
-  function applyAlign(img, a) { img.style.transform = 'translate(' + (a.dx * 100).toFixed(2) + '%, ' + (a.dy * 100).toFixed(2) + '%) scale(' + a.scale.toFixed(3) + ')'; }
+  function applyAlign(img, a) { img.style.transform = 'translate(' + (a.dx * 100).toFixed(2) + '%, ' + (a.dy * 100).toFixed(2) + '%) rotate(' + (a.rot || 0).toFixed(2) + 'deg) scale(' + a.scale.toFixed(3) + ')'; }
   function zoomBy(a, mult) { a.scale = Math.round(clamp(a.scale * mult, 1, 4) * 1000) / 1000; }
+  function rotateBy(a, delta) { a.rot = Math.round(clamp((a.rot || 0) + delta, -20, 20) * 1000) / 1000; }
   // Binds pan-drag and wheel/pinch-zoom to `img`. `draft` is an { id, dx, dy, scale } object the caller
   // owns and keeps current for whichever photo `img` is showing; `active()` gates the gesture so the
   // same wiring can sit inert until align mode is switched on, and stays out of the way of other drags
@@ -91,7 +92,7 @@
   // A compact "- Reset +" row for the photo currently being aligned, plus the Align toggle itself.
   function alignRow(on, toggle, draft, after) {
     const zoom = (mult) => { zoomBy(draft, mult); after(); commitAlign(draft.id, draft); };
-    const reset = () => { draft.dx = 0; draft.dy = 0; draft.scale = 1; after(); commitAlign(draft.id, draft); };
+    const reset = () => { draft.dx = 0; draft.dy = 0; draft.scale = 1; draft.rot = 0; after(); commitAlign(draft.id, draft); };
     return h('div', { class: 'row alignrow' },
       h('button', { type: 'button', class: 'chip line', onclick: toggle }, on ? 'Done aligning' : 'Align photo'),
       on ? h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out', onclick: () => zoom(1 / 1.15) }, '−') : null,
@@ -161,7 +162,7 @@
     const stage = h(blurOn ? 'button' : 'div', blurOn ? { type: 'button', class: 'stage', onclick: () => { T.reveal = !T.reveal; update(); } } : { class: 'stage' }, img, blurOn ? badge : null, blurOn ? eye : null, cap);
 
     // alignment: drag to pan, wheel/pinch or +/- to zoom — per photo, remembered next time
-    const tDraft = { id: null, dx: 0, dy: 0, scale: 1 };
+    const tDraft = { id: null, dx: 0, dy: 0, scale: 1, rot: 0 };
     wireAlign(img, tDraft, () => T.aligning);
     const alignBox = h('div', null);
 
@@ -306,6 +307,7 @@
       return h('label', { class: 'field flex' }, h('span', { class: 'lab' }, label), h('span', { class: 'selbox' }, s));
     };
     const stageBox = h('div', { class: 'cmpwrap' });
+    const zoomCtl = h('div', { class: 'stack' });
     const help = h('div', { class: 'muted small' });
     const tableBox = h('div', null);
     const badge = h('button', { type: 'button', class: 'stage-badge cmpbadge', onclick: () => { CMP.reveal = !CMP.reveal; redraw(); } });
@@ -327,6 +329,9 @@
       wireAlign(im, draft, active);
       return im;
     }
+    // A 3x3 guide grid over a photo while aligning, so the same reference lines fall on both photos and
+    // you can line pose/position up against them instead of eyeballing it against the other photo alone.
+    function alignGrid() { return h('div', { class: 'cmp-grid', 'aria-hidden': 'true' }); }
     const alignCtl = h('div', null);
     // AI auto-align: an opt-in suggestion only, shown live and editable, never written until accepted.
     // Regoal never sends progress photos to AI anywhere else — this is the one explicit exception, and
@@ -384,34 +389,50 @@
       const close = U.sheet('Auto-align with AI', body, [{ label: 'Cancel', run: () => { if (!applied && before) { Object.assign(draftFor(cb.photo.id), before); redraw(); } if (state.busy) state.busy.abort(); } }]);
     }
 
-    function alignPanel(ca, cb) {
-      U.clear(alignCtl);
-      alignCtl.appendChild(h('div', { class: 'row alignrow' }, h('button', { type: 'button', class: 'chip line', onclick: () => { CMP.aligning = !CMP.aligning; redraw(); } }, CMP.aligning ? 'Done aligning' : 'Align photos')));
-      if (!CMP.aligning) return;
-      alignCtl.appendChild(h('div', { class: 'row' }, UI.btn('Auto-align with AI', { kind: 'quiet', onClick: () => autoAlignSheet(ca, cb) })));
+    // Zoom is always on screen, right under the photos, so it never needs Align mode to be on first.
+    function zoomRow(ca, cb) {
+      U.clear(zoomCtl);
       const draftA = draftFor(ca.photo.id), draftB = draftFor(cb.photo.id);
       const zoomPair = (label, draft) => h('div', { class: 'row space' },
         h('span', { class: 'muted small' }, label),
         h('div', { class: 'row' },
           h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom out ' + label, onclick: () => { zoomBy(draft, 1 / 1.15); commitAlign(draft.id, draft); redraw(); } }, '−'),
           h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in ' + label, onclick: () => { zoomBy(draft, 1.15); commitAlign(draft.id, draft); redraw(); } }, '+')));
-      alignCtl.appendChild(zoomPair('Before', draftA));
-      alignCtl.appendChild(zoomPair('After', draftB));
+      zoomCtl.appendChild(zoomPair('Before', draftA));
+      zoomCtl.appendChild(zoomPair('After', draftB));
+    }
+
+    function alignPanel(ca, cb) {
+      U.clear(alignCtl);
+      alignCtl.appendChild(h('div', { class: 'row alignrow' }, h('button', { type: 'button', class: 'chip line', onclick: () => { CMP.aligning = !CMP.aligning; redraw(); } }, CMP.aligning ? 'Done aligning' : 'Align photos')));
+      if (!CMP.aligning) return;
+      alignCtl.appendChild(h('div', { class: 'row' }, UI.btn('Auto-align with AI', { kind: 'quiet', onClick: () => autoAlignSheet(ca, cb) })));
+      const draftA = draftFor(ca.photo.id), draftB = draftFor(cb.photo.id);
+      const rotatePair = (label, draft) => h('div', { class: 'row space' },
+        h('span', { class: 'muted small' }, 'Straighten ' + label),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Rotate ' + label + ' left', onclick: () => { rotateBy(draft, -0.5); commitAlign(draft.id, draft); redraw(); } }, '⟲'),
+          h('button', { type: 'button', class: 'chip line', 'aria-label': 'Rotate ' + label + ' right', onclick: () => { rotateBy(draft, 0.5); commitAlign(draft.id, draft); redraw(); } }, '⟳')));
+      alignCtl.appendChild(rotatePair('Before', draftA));
+      alignCtl.appendChild(rotatePair('After', draftB));
       const resetBoth = () => {
-        for (const c of [ca, cb]) { const d = draftFor(c.photo.id); d.dx = 0; d.dy = 0; d.scale = 1; commitAlign(d.id, d); }
+        for (const c of [ca, cb]) { const d = draftFor(c.photo.id); d.dx = 0; d.dy = 0; d.scale = 1; d.rot = 0; commitAlign(d.id, d); }
         redraw();
       };
       alignCtl.appendChild(h('div', { class: 'row' }, h('button', { type: 'button', class: 'chip line', onclick: resetBoth }, 'Reset both')));
-      alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or use the +/− above to zoom it. Send both to AI for a suggested fit.'));
+      alignCtl.appendChild(h('div', { class: 'muted small' }, 'Drag either photo to line it up, or use the ⟲/⟳ above to straighten it. The grid lines up the same way on both. Send both to AI for a suggested fit.'));
     }
 
     function redraw() {
       const ca = byWeek(CMP.a), cb = byWeek(CMP.b), hidden = blurOn && !CMP.reveal;
       U.clear(stageBox);
-      stageBox.appendChild(h('div', { class: 'cmp-side' + (hidden ? ' blur' : '') }, h('div', { class: 'cmp-cell' }, photoAligned(ca.week, null), pill(wk(ca.week))), h('div', { class: 'cmp-cell' }, photoAligned(cb.week, null), pill(wk(cb.week)))));
+      stageBox.appendChild(h('div', { class: 'cmp-side' + (hidden ? ' blur' : '') },
+        h('div', { class: 'cmp-cell' }, photoAligned(ca.week, null), CMP.aligning ? alignGrid() : null, pill(wk(ca.week))),
+        h('div', { class: 'cmp-cell' }, photoAligned(cb.week, null), CMP.aligning ? alignGrid() : null, pill(wk(cb.week)))));
       help.textContent = 'Same pose, same light. Look at the same spots on both.';
       if (blurOn) { badge.textContent = hidden ? 'Blurred · tap to reveal' : 'Tap to blur'; stageBox.appendChild(badge); }
       if (loaded && (!urlByWeek[ca.week] || !urlByWeek[cb.week])) help.textContent = 'One of these photos is not on this device (it was left out of the backup you restored).';
+      zoomRow(ca, cb);
       alignPanel(ca, cb);
 
       const rows = compareRows(st, ca, cb, set);
@@ -429,7 +450,7 @@
     redraw();
     loadUrls(have, urlByWeek, myGen).then((ok) => { if (ok) { loaded = true; redraw(); } });
 
-    return UI.page(head, UI.scroller(h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), stageBox, alignCtl, help, tableBox,
+    return UI.page(head, UI.scroller(h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), stageBox, zoomCtl, alignCtl, help, tableBox,
       h('div', { class: 'muted small' }, 'Photos stay on this device.' + (blurOn ? ' Blur is on until you reveal them.' : ''))), foot);
   };
 

@@ -1571,10 +1571,11 @@ async function main() {
     ok(saved.scale > 1, 'zoom in raised the scale: ' + saved.scale);
     ok(saved.dx !== 0 || saved.dy !== 0, 'the drag moved it off-centre: ' + JSON.stringify(saved));
     // the style getter re-serializes (drops trailing zeros) and the saved copy is rounded to 3 decimals for
-    // storage, so compare the numbers with a little slack rather than the raw strings.
+    // storage, so compare the numbers with a little slack rather than the raw strings. The transform is
+    // translate(dx%, dy%) rotate(rot deg) scale(scale) — four numbers, skip the rotate one here.
     const nums = (t) => (t.match(/-?[\d.]+/g) || []).map(Number);
     const transform = await img.evaluate((el) => el.style.transform);
-    const close = (t, dx, dy, scale) => { const [a, b, c] = nums(t); return Math.abs(a - dx * 100) < 0.5 && Math.abs(b - dy * 100) < 0.5 && Math.abs(c - scale) < 0.01; };
+    const close = (t, dx, dy, scale) => { const [a, b, , c] = nums(t); return Math.abs(a - dx * 100) < 0.5 && Math.abs(b - dy * 100) < 0.5 && Math.abs(c - scale) < 0.01; };
     ok(close(transform, saved.dx, saved.dy, saved.scale), 'the live transform matches what was saved: ' + transform + ' vs saved=' + JSON.stringify(saved));
     await tpage.getByRole('button', { name: 'Done aligning' }).click();
     // leaving and returning shows the same alignment automatically, with align mode itself back off
@@ -1593,15 +1594,37 @@ async function main() {
     await tpage.getByRole('link', { name: 'Compare two dates' }).click();
     await tpage.waitForSelector('.cmp-side');
     await noWeekWords('compare');
-    eq(await tpage.getByLabel('Before').inputValue(), '1'); eq(await tpage.getByLabel('After').inputValue(), '9');
+    eq(await tpage.getByLabel('Before', { exact: true }).inputValue(), '1'); eq(await tpage.getByLabel('After', { exact: true }).inputValue(), '9');
     eq(await tpage.locator('.cmp-side img').count(), 2);
     const rows = await tpage.locator('.cmprow:not(.head)').allInnerTexts();
     ok(rows.length === 3 && /Weight/.test(rows[0]) && /82\.0 kg/.test(rows[0]) && /80\.2 kg/.test(rows[0]) && /-1\.8 kg/.test(rows[0]), 'weight row: ' + rows[0]);
     ok(/Waist/.test(rows[1]) && /-1\.8 cm/.test(rows[1]), 'waist row: ' + rows[1]);
     ok(/Chest/.test(rows[2]) && /\+1\.2 cm/.test(rows[2]), 'chest row: ' + rows[2]);
-    await tpage.getByLabel('After').selectOption('5'); await tpage.getByLabel('Before').selectOption('5');
+    await tpage.getByLabel('After', { exact: true }).selectOption('5'); await tpage.getByLabel('Before', { exact: true }).selectOption('5');
     ok(await tpage.getByRole('button', { name: 'Download image' }).isDisabled(), 'the same check-in twice cannot be downloaded');
-    await tpage.getByLabel('Before').selectOption('1'); await tpage.getByLabel('After').selectOption('9');
+    await tpage.getByLabel('Before', { exact: true }).selectOption('1'); await tpage.getByLabel('After', { exact: true }).selectOption('9');
+  });
+
+  await step('compare: the zoom row needs no Align mode, the guide grid and straighten controls only show while aligning', async () => {
+    const beforeId = await tpage.evaluate(() => Store.getState().photos.find((p) => p.week === 1 && p.angle === 'Front').id);
+    eq(await tpage.locator('.cmp-grid').count(), 0, 'no guide grid before Align photos is tapped');
+    eq(await tpage.getByRole('button', { name: 'Zoom in Before', exact: true }).count(), 1, 'zoom buttons are already there, no Align mode needed');
+    eq(await tpage.getByRole('button', { name: 'Rotate Before right' }).count(), 0, 'straighten buttons are inside Align mode, not shown yet');
+    await tpage.getByRole('button', { name: 'Zoom in Before', exact: true }).click();
+    await tpage.waitForFunction((id) => Store.getState().photoAligns[id] && Store.getState().photoAligns[id].scale > 1, beforeId);
+    eq(await tpage.evaluate((id) => Store.getState().photoAligns[id].scale, beforeId), 1.15, 'zooming works without Align mode on');
+    await tpage.getByRole('button', { name: 'Align photos' }).click();
+    eq(await tpage.locator('.cmp-grid').count(), 2, 'a guide grid appears over both photos while aligning');
+    await tpage.getByRole('button', { name: 'Rotate Before right' }).click();
+    await tpage.getByRole('button', { name: 'Rotate Before right' }).click();
+    await tpage.waitForFunction((id) => Store.getState().photoAligns[id].rot > 0, beforeId);
+    eq(await tpage.evaluate((id) => Store.getState().photoAligns[id].rot, beforeId), 1, 'two taps at 0.5deg each straighten by 1deg');
+    const liveTransform = await tpage.locator('.cmp-side .cmp-cell img').first().evaluate((el) => el.style.transform);
+    ok(/rotate\(1(\.0+)?deg\)/.test(liveTransform), 'the live preview rotates too: ' + liveTransform);
+    await tpage.getByRole('button', { name: 'Reset both' }).click();
+    await tpage.waitForFunction(() => Object.values(Store.getState().photoAligns).every((a) => a.scale === 1 && a.dx === 0 && a.dy === 0 && a.rot === 0));
+    await tpage.getByRole('button', { name: 'Done aligning' }).click();
+    eq(await tpage.locator('.cmp-grid').count(), 0, 'the guide grid goes away once Done aligning is tapped');
   });
 
   await step('compare: Align photos aligns both photos independently, by drag and by zoom buttons', async () => {
@@ -1744,6 +1767,36 @@ async function main() {
       return [px[0], px[1], px[2]];
     });
     eq(corner, [255, 0, 0], 'center of the Before cell should land in the top-left (red) quadrant, same as the live CSS pan shows, not the opposite bottom-right (yellow) corner');
+  });
+
+  await step('the exported crop rotates the same direction as the live on-screen straighten control', async () => {
+    // Verified by hand against a live screenshot: a 20deg rotate(), applied the same way cover() applies it
+    // (translate then rotate then scale, about the box's own centre, same canvas rotate() call CSS uses
+    // under the hood), turns a 4-quadrant photo so the midpoint of each box edge lands in a different
+    // quadrant than at rot:0 — red at the top edge, blue at the left edge, green at the right edge, yellow
+    // at the bottom edge. A sign or axis mistake in cover()'s rotation would scramble this mapping.
+    const mids = await tpage.evaluate(async () => {
+      const c = document.createElement('canvas'); c.width = 600; c.height = 800; const x = c.getContext('2d');
+      x.fillStyle = '#ff0000'; x.fillRect(0, 0, 300, 400);    // top-left: red
+      x.fillStyle = '#00ff00'; x.fillRect(300, 0, 300, 400);  // top-right: green
+      x.fillStyle = '#0000ff'; x.fillRect(0, 400, 300, 400);  // bottom-left: blue
+      x.fillStyle = '#ffff00'; x.fillRect(300, 400, 300, 400); // bottom-right: yellow
+      const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+      const align = { dx: 0, dy: 0, scale: 1, rot: 20 };
+      const out = await MediaOut.composeComparison({ a: { blob, label: 'A', align }, b: { blob, label: 'B', align: { dx: 0, dy: 0, scale: 1, rot: 0 } }, format: 'png', labels: false, rows: null, head: ['', ''] });
+      const url = URL.createObjectURL(out);
+      const img = new Image(); img.src = url; await new Promise((r) => { img.onload = r; });
+      const cv = document.createElement('canvas'); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0); // several getImageData reads below
+      URL.revokeObjectURL(url);
+      const w = img.naturalWidth / 2, hh = img.naturalHeight; // "Before" cell is the left half
+      const px = (fx, fy) => { const d = cx.getImageData(Math.floor(w * fx), Math.floor(hh * fy), 1, 1).data; return [d[0], d[1], d[2]]; };
+      return { top: px(0.5, 0.03), left: px(0.03, 0.5), right: px(0.97, 0.5), bottom: px(0.5, 0.97) };
+    });
+    eq(mids.top, [255, 0, 0], 'top edge midpoint should be red after a 20deg rotation');
+    eq(mids.left, [0, 0, 255], 'left edge midpoint should be blue');
+    eq(mids.right, [0, 255, 0], 'right edge midpoint should be green');
+    eq(mids.bottom, [255, 255, 0], 'bottom edge midpoint should be yellow');
   });
 
   await step('a pan saved right at the edge with no zoom still draws the photo, not a blank frame', async () => {
@@ -2570,6 +2623,8 @@ async function main() {
     eq(labels.length, 4, 'calories plus protein, carbs and fat: ' + labels);
     for (const want of ['Calories per day against target', 'Protein per day against target', 'Carbs per day against target', 'Fat per day against target']) ok(labels.includes(want), want + ' chart present: ' + labels);
     eq(await foodCard.locator('.chart circle').count(), 4 * 3, 'three logged days plotted on each of the four charts');
+    const titles = await foodCard.locator('.chart-title .lab').allInnerTexts();
+    eq(titles, ['Calories', 'Protein', 'Carbs', 'Fat'], 'each chart has a visible title so it is clear which is which: ' + titles);
   });
   eq(pgproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
   await pgctx.close();
