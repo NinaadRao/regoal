@@ -4,10 +4,10 @@
  * your data lives in IndexedDB, which this file cannot read.
  */
 'use strict';
-const CACHE = 'regoal-shell-v29';
+const CACHE = 'regoal-shell-v30';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/engine.js', 'js/diet.js', 'js/goals.js', 'js/util.js', 'js/crypto.js', 'js/store.js', 'js/llm.js', 'js/foods.js', 'js/foodai.js', 'js/liftai.js', 'js/photoalignai.js', 'js/coach.js', 'js/ui.js',
+  'js/engine.js', 'js/diet.js', 'js/goals.js', 'js/util.js', 'js/native.js', 'js/crypto.js', 'js/store.js', 'js/llm.js', 'js/foods.js', 'js/foodai.js', 'js/liftai.js', 'js/photoalignai.js', 'js/coach.js', 'js/ui.js',
   'js/screens-diet.js', 'js/screens-goals.js', 'js/screens-onboard.js', 'js/screens-today.js', 'js/screens-water.js', 'js/screens-activity.js', 'js/screens-fuel.js', 'js/screens-progress.js', 'js/screens-profile.js', 'js/library.js', 'js/screens-library.js', 'js/mediaexport.js', 'js/screens-trend.js', 'js/screens-export.js', 'js/reel.js', 'js/screens-reel.js', 'js/screens-coach.js', 'js/screens-settings.js', 'js/app.js',
   'data/foods.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'fonts/big-shoulders-display-700.woff2', 'fonts/big-shoulders-display-800.woff2', 'fonts/dm-sans-400.woff2', 'fonts/dm-sans-500.woff2', 'fonts/dm-sans-700.woff2',

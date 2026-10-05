@@ -5,7 +5,7 @@ Regoal is a web app that stores everything in your browser. You can run it on yo
 - [On your computer](#on-your-computer)
 - [Get an https address for your phone](#get-an-https-address-for-your-phone) (needed for iPhone and Android)
 - [Install on an iPhone](#install-on-an-iphone)
-- [Install on Android](#install-on-android)
+- [Install on Android](#install-on-android) (or [build an APK](ANDROID.md))
 - [After you install](#after-you-install)
 - [Updating later](#updating-later)
 - [If something looks wrong](#if-something-looks-wrong)
@@ -60,6 +60,8 @@ Notes for iPhone:
 - Save backups with **Save or share**, then **Save to Files**. Saving under the same name offers **Replace**.
 
 ## Install on Android
+
+Prefer a real app file? See [ANDROID.md](ANDROID.md) for building an APK. The steps below install it from Chrome.
 
 1. Open the https address in **Chrome**.
 2. Tap the **⋮** menu, then **Install app** (some versions say **Add to Home screen**, then **Install**).

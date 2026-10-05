@@ -214,9 +214,15 @@
 
   // ---------- handing a file to the person ----------
   const fileOf = (blob, name) => new File([blob], name, { type: blob.type });
-  function canShare(blob, name) { try { return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [fileOf(blob, name)] })); } catch (e) { return false; } }
-  function share(blob, name) { return navigator.share({ files: [fileOf(blob, name)] }); }
+  // Inside the Android app there is no Web Share API or blob download, so Native hands the file to Android's share sheet.
+  const inApp = () => !!(root.Native && root.Native.isApp());
+  function canShare(blob, name) { if (inApp()) return true; try { return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [fileOf(blob, name)] })); } catch (e) { return false; } }
+  function share(blob, name) {
+    if (inApp()) return root.Native.shareFile(blob, name).then((r) => { if (r === 'cancelled') throw new DOMException('Cancelled', 'AbortError'); });
+    return navigator.share({ files: [fileOf(blob, name)] });
+  }
   function saveAs(blob, name) {
+    if (inApp()) { root.Native.shareFile(blob, name).catch(() => root.U.toast('Could not save that file.', 'warn')); return; }
     const url = URL.createObjectURL(blob);
     const a = h('a', { href: url, download: name, class: 'hidden' });
     document.body.appendChild(a); a.click(); a.remove();

@@ -5,14 +5,24 @@
   "private": true,
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node scripts/serve.mjs",
-    "test": "node --test tests/engine.test.js tests/foods.test.js tests/llm.test.js tests/activity.test.js tests/diet.test.js tests/goals.test.js",
+    "test": "node --test tests/engine.test.js tests/foods.test.js tests/llm.test.js tests/activity.test.js tests/diet.test.js tests/goals.test.js tests/native.test.js",
     "e2e": "node tests/e2e.mjs",
     "check-private": "node scripts/check-private.mjs",
     "hooks": "sh scripts/install-hooks.sh",
-    "site": "sh scripts/make-site.sh"
+    "site": "sh scripts/make-site.sh",
+    "android": "sh scripts/android.sh",
+    "android:release": "sh scripts/android.sh release",
+    "android:open": "sh scripts/android.sh open"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/filesystem": "^8.1.0",
+    "@capacitor/share": "^8.0.0"
   }
 }

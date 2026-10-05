@@ -126,6 +126,7 @@ Then open Regoal from its home screen icon, answer the setup questions (about fo
 ## Documentation
 
 - [docs/INSTALL.md](docs/INSTALL.md): run, install on iPhone or Android, update, fix problems.
+- [docs/ANDROID.md](docs/ANDROID.md): build an Android app (APK) from this folder.
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md): photo trend, food database and your own food list, workout library, form check, reel, and the AI features and your key.
 - [docs/BACKUP.md](docs/BACKUP.md): make and restore a backup, and keep the app if you do not use it daily.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it fits together and why, and the file layout.

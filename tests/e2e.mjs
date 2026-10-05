@@ -2758,6 +2758,40 @@ async function main() {
   });
   await fctx.close();
 
+  // ================= the Android app (Capacitor shell) =================
+  console.log('\nAndroid app shell');
+  const actx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await actx.addInitScript(() => {
+    // what the Capacitor Android shell injects: a native platform with the Filesystem and Share plugins
+    window.__cap = { writes: [], appends: [], shares: [] };
+    window.Capacitor = { isNativePlatform: () => true, Plugins: {
+      Filesystem: { rmdir: async () => {}, writeFile: async (o) => { window.__cap.writes.push(o); return { uri: 'file:///cache/' + o.path }; }, appendFile: async (o) => { window.__cap.appends.push(o); } },
+      Share: { share: async (o) => { window.__cap.shares.push(o); return {}; } },
+    } };
+  });
+  const apage = await actx.newPage(); apage.setDefaultTimeout(8000);
+  const aproblems = await collect(apage);
+  await apage.goto(base);
+  await apage.waitForSelector('text=Track the change.');
+  await step('android app: images, videos and backups go to the share sheet, since a WebView cannot download or use Web Share', async () => {
+    eq(await apage.evaluate(() => Native.isApp()), true);
+    eq(await apage.evaluate(() => MediaOut.canShare(new Blob(['x']), 'a.png')), true, 'the share button is offered');
+    await apage.evaluate(() => MediaOut.share(new Blob(['img']), 'regoal-compare.png'));
+    eq(await apage.evaluate(() => window.__cap.shares.length), 1);
+    eq(await apage.evaluate(() => window.__cap.shares[0].files[0]), 'file:///cache/regoal-share/regoal-compare.png');
+    eq(await apage.evaluate(() => atob(window.__cap.writes[0].data)), 'img', 'the file content is what was handed over');
+    await apage.evaluate(() => MediaOut.saveAs(new Blob(['vid']), 'regoal.mp4'));
+    await apage.waitForFunction(() => window.__cap.shares.length === 2);
+    const how = await apage.evaluate(() => Screens._.deliver('regoal.regoalbackup', 'backup text'));
+    eq(how, 'shared', 'a backup is delivered through the share sheet');
+    eq(await apage.evaluate(() => window.__cap.shares.length), 3);
+    eq(await apage.evaluate(() => atob(window.__cap.writes[2].data)), 'backup text');
+  });
+  await step('android app: nothing is downloaded and no console problems', async () => {
+    eq(aproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
+  });
+  await actx.close();
+
   // ================= service worker on localhost =================
   console.log('\nService worker');
   const sctx = await browser.newContext();

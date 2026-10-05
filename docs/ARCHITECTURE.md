@@ -78,6 +78,7 @@ js/diet.js            diet plan and "eat next": food table, meal ideas, preferen
 js/screens-diet.js    diet plan screen, preferences, the Fuel "what next" card, optional text-only AI tips
 js/screens-goals.js   Goals tab: switcher, goal detail, add and edit, plan length, next cycle
 js/mediaexport.js     comparison image and time-lapse video, drawn on a canvas on your device
+js/native.js          only active inside the Android app (docs/ANDROID.md): hands saved files to Android's share sheet
 data/foods.json       the food database, USDA only (built by scripts/build-foods.mjs; sources in data/SOURCES.md)
 scripts/ifct-to-import.mjs  turns a copy of IFCT into a file for "Add my own food list"
 js/screens-*.js       screens

@@ -33,6 +33,9 @@
         try { const r = await writeToFolder(dir, name, blob); if (r) { deliver.removed = r.removed; return 'folder'; } } catch (e) { /* fall through to the normal save */ }
       }
     }
+    if (root.Native && root.Native.isApp()) { // the Android app: no Web Share or blob download, so use Android's share sheet
+      try { return await root.Native.shareFile(blob, name); } catch (e) { /* fall through to the browser ways below */ }
+    }
     const file = new File([blob], name, { type: 'application/octet-stream' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: name }); return 'shared'; } catch (e) { if (e && e.name === 'AbortError') return 'cancelled'; }
