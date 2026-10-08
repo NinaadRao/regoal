@@ -503,3 +503,159 @@ test('volUnitFor and fmtVol/mlToUnit/unitToMl: auto follows body weight unit, an
   assert.equal(E.fmtVol(500, 'oz'), Math.round(500 / 29.5735) + ' fl oz');
   assert.ok(Math.abs(E.unitToMl(E.mlToUnit(2000, 'oz'), 'oz') - 2000) < 1);
 });
+
+// ---------- editing the workouts and the weekday schedule ----------
+const planFor = () => E.buildPlan(answers());
+const sess = (p, n) => p.workouts.find((w) => w.name === n);
+
+test('replace, add, remove and update exercises in one session', () => {
+  const p = planFor();
+  const before = sess(p, 'Push').ex.length;
+  const r = E.applySessionEdits(p, [
+    { session: 'Push', op: 'replace', target: { n: 'Cable fly' }, to: { n: 'Dips', sets: 4, range: '8-12', rest: 90, m: 'triceps' } },
+    { session: 'Push', op: 'add', to: { n: 'Landmine press', sets: 3, range: '8-10', m: 'shoulders' } },
+    { session: 'Push', op: 'remove', target: { n: 'Lateral raise' } },
+    { session: 'Push', op: 'update', target: { n: 'Dips' }, sets: 5, range: '6-8' },
+  ]);
+  assert.deepEqual(r.errors, []);
+  const names = sess(p, 'Push').ex.map((x) => x.n);
+  assert.ok(names.includes('Dips') && names.includes('Landmine press'));
+  assert.ok(!names.includes('Cable fly') && !names.includes('Lateral raise'));
+  assert.equal(names.length, before);
+  const dips = sess(p, 'Push').ex.find((x) => x.n === 'Dips');
+  assert.equal(dips.sets, 5);
+  assert.equal(dips.range, '6-8');
+  assert.equal(dips.m, 'arms', 'triceps counts as arms');
+  assert.equal(E.canonMuscle('Glutes'), 'legs');
+  assert.equal(E.canonMuscle('banana'), 'other');
+});
+
+test('a bad edit is reported and skipped, the rest still apply', () => {
+  const p = planFor();
+  const r = E.applySessionEdits(p, [
+    { session: 'Nope', op: 'add', to: { n: 'X' } },
+    { session: 'Push', op: 'remove', target: { n: 'Does not exist' } },
+    { session: 'Push', op: 'add', to: {} },
+    null, 'x', { session: 'Push', op: 'explode' },
+    { session: 'Push', op: 'add', to: { n: 'Dips', sets: 99, range: 'abc', rest: 9999, m: 'nonsense' } },
+  ]);
+  assert.equal(r.errors.length, 6);
+  const dips = sess(p, 'Push').ex.find((x) => x.n === 'Dips');
+  assert.equal(dips.sets, 8);
+  assert.equal(dips.rest, 300);
+  assert.equal(dips.range, '8-12');
+  assert.equal(dips.m, 'other');
+});
+
+test('hostile keys and oversized lists cannot get in', () => {
+  const p = planFor();
+  const r = E.applySessionEdits(p, [JSON.parse('{"session":"Push","op":"add","to":{"n":"A"},"__proto__":{"x":1}}')]);
+  assert.equal(r.errors.length, 1);
+  assert.equal({}.x, undefined);
+  const many = Array.from({ length: 40 }, (_, i) => ({ session: 'Push', op: 'add', to: { n: 'Ex ' + i } }));
+  E.applySessionEdits(p, many);
+  assert.ok(sess(p, 'Push').ex.length <= 12);
+});
+
+test('rewrite swaps a whole session for a different set of exercises, keeping chosen ones', () => {
+  const p = planFor();
+  const keep = sess(p, 'Push').ex[0];
+  const r = E.applySessionEdits(p, [{ session: 'Push', op: 'rewrite', exercises: [{ keep: { n: keep.n } }, { n: 'Dips', m: 'triceps' }, { n: 'Landmine press' }, { n: 'Dips' }] }]);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(sess(p, 'Push').ex.map((x) => x.n), [keep.n, 'Dips', 'Landmine press']);
+  assert.equal(E.applySessionEdits(p, [{ session: 'Push', op: 'rewrite', exercises: [] }]).errors.length, 1);
+  assert.equal(sess(p, 'Push').ex.length, 3);
+});
+
+test('a tracked lift taken out of every session stops being tracked, one still placed does not', () => {
+  const p = planFor();
+  assert.ok(p.lifts.lat_pulldown);
+  const c = { sessionEdits: [{ session: 'Pull', op: 'remove', target: { lift: 'lat_pulldown' } }] };
+  const pv = E.previewWorkoutChanges(p, c);
+  assert.ok(!pv.plan.lifts.lat_pulldown);
+  assert.ok(pv.notes.some((n) => /Stopped tracking/.test(n)));
+  assert.ok(p.lifts.lat_pulldown, 'preview must not touch the original');
+  // moving a tracked lift between sessions keeps it
+  const lift = sess(p, 'Pull').ex.find((x) => x.lift === 'lat_pulldown');
+  const mv = E.previewWorkoutChanges(p, { sessionEdits: [
+    { session: 'Push', op: 'add', to: { lift: 'lat_pulldown' } },
+    { session: 'Pull', op: 'remove', target: { lift: 'lat_pulldown' } },
+  ] });
+  assert.ok(mv.plan.lifts.lat_pulldown);
+  assert.ok(lift);
+});
+
+test('defineLifts adds a tracked exercise that the session edits place', () => {
+  const p = planFor();
+  const defs = { c_dips_1: { id: 'c_dips_1', name: 'Dips', muscle: 'triceps', equip: 'bw', startReps: 8, sets: 3 } };
+  const pv = E.previewWorkoutChanges(p, { defineLifts: defs, sessionEdits: [{ session: 'Push', op: 'add', to: { lift: 'c_dips_1' } }] });
+  assert.equal(pv.ok, true);
+  assert.ok(pv.plan.lifts.c_dips_1);
+  assert.ok(sess(pv.plan, 'Push').ex.some((x) => x.lift === 'c_dips_1'));
+  const bad = E.previewWorkoutChanges(p, { defineLifts: { 'bad id!': defs.c_dips_1, __proto__x: 1 } });
+  assert.deepEqual(Object.keys(bad.plan.lifts), Object.keys(p.lifts));
+});
+
+test('a permanent schedule change swaps weekdays going forward and leaves the past alone', () => {
+  const p = planFor();
+  const oldMon = E.sessionFor(p, {}, '2026-01-05').session.name; // Monday
+  const oldTue = E.sessionFor(p, {}, '2026-01-06').session.name;
+  const r = E.cleanSchedule(p, { [oldMon]: 'Tuesday', [oldTue]: 'Monday' });
+  assert.equal(r.ok, true);
+  E.applyWorkoutChanges(p, { schedule: { from: '2026-02-02', map: { [oldMon]: 'Tuesday', [oldTue]: 'Monday' } } });
+  assert.equal(E.sessionFor(p, {}, '2026-01-05').session.name, oldMon, 'past Monday unchanged');
+  assert.equal(E.sessionFor(p, {}, '2026-01-26').session.name, oldMon, 'the Monday before the change unchanged');
+  assert.equal(E.sessionFor(p, {}, '2026-02-02').session.name, oldTue, 'Monday from the change on');
+  assert.equal(E.sessionFor(p, {}, '2026-02-03').session.name, oldMon);
+  assert.equal(E.sessionFor(p, {}, '2026-02-09').session.name, oldTue, 'and it stays that way every week');
+});
+
+test('schedule changes can stack, replace same-day entries, and refuse clashes and nonsense', () => {
+  const p = planFor();
+  const bad = E.cleanSchedule(p, { Push: 'Tuesday' });
+  assert.equal(bad.ok, false, 'Push and Pull would both be on Tuesday');
+  assert.equal(E.cleanSchedule(p, { Push: 'Funday' }).ok, false);
+  assert.equal(E.cleanSchedule(p, { Nothing: 'Monday' }).ok, false);
+  assert.equal(E.cleanSchedule(p, [1]).ok, false);
+  assert.equal(E.cleanSchedule(p, JSON.parse('{"__proto__":{"a":1}}')).ok, false);
+  const pv = E.previewWorkoutChanges(p, { schedule: { from: '2026-02-02', map: { Push: 'Sat' } } });
+  assert.equal(pv.ok, true, 'a free day is fine');
+  assert.equal(E.sessionFor(pv.plan, {}, '2026-02-07').session.name, 'Push');
+  assert.equal(E.sessionFor(pv.plan, {}, '2026-02-02').session, null, 'Monday is now a rest day');
+  E.applyWorkoutChanges(p, { schedule: { from: '2026-02-02', map: { Push: 'Sat' } } });
+  E.applyWorkoutChanges(p, { schedule: { from: '2026-02-02', map: { Push: 'Sun' } } });
+  assert.equal(p.weekdayLog.filter((x) => x.from === '2026-02-02').length, 1);
+  assert.equal(E.sessionFor(p, {}, '2026-02-08').session.name, 'Push');
+  const notDate = E.previewWorkoutChanges(p, { schedule: { from: 'soon', map: { Push: 'Sat' } } });
+  assert.equal(notDate.notes.length, 0);
+});
+
+test('through the event log: schedule and exercise edits apply, sync profile days, and undo cleanly', () => {
+  const a = answers();
+  const plan = E.buildPlan(a);
+  const ev = [
+    { seq: 1, ts: 't', type: 'profile_created', data: { profile: { weightKg: 80, days: [1, 2, 3, 4, 5] }, plan } },
+    { seq: 2, ts: 't', type: 'plan_revised', data: { reason: 'move', changes: { schedule: { from: '2026-02-02', map: { Push: 'Saturday' } }, sessionEdits: [{ session: 'Pull', op: 'add', to: { n: 'Dips', m: 'triceps' } }] } }, src: 'coach' },
+  ];
+  const s = E.project(ev);
+  assert.ok(sess(s.plan, 'Pull').ex.some((x) => x.n === 'Dips'));
+  assert.equal(sess(s.plan, 'Push').weekday, 6);
+  assert.deepEqual(s.profile.days, [2, 3, 4, 5, 6]);
+  assert.equal(s.plan.history.length, 1);
+  const undone = E.project(ev.concat([{ seq: 3, ts: 't', type: 'event_voided', data: { target: 2 } }]));
+  assert.equal(sess(undone.plan, 'Push').weekday, 1);
+  assert.deepEqual(undone.profile.days, [1, 2, 3, 4, 5]);
+  assert.ok(!undone.plan.weekdayLog);
+  assert.ok(!sess(undone.plan, 'Pull').ex.some((x) => x.n === 'Dips'));
+});
+
+test('a mangled revision in a backup never stops the log from loading', () => {
+  const plan = E.buildPlan(answers());
+  const ev = [
+    { seq: 1, ts: 't', type: 'profile_created', data: { profile: { weightKg: 80 }, plan } },
+    { seq: 2, ts: 't', type: 'plan_revised', data: { reason: 'x', changes: { sessionEdits: 'oops', schedule: 7, defineLifts: [1] } }, src: 'coach' },
+    { seq: 3, ts: 't', type: 'plan_revised', data: { reason: 'y', changes: { sessionEdits: [{ op: 'add' }], schedule: { from: 'x', map: null } } }, src: 'coach' },
+  ];
+  const s = E.project(ev);
+  assert.equal(s.plan.workouts.length, plan.workouts.length);
+});

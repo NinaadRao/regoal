@@ -642,7 +642,7 @@
         case 'goal_set': { const r = cleanGoal(d && d.goal); if (r.ok && (s.goals[r.value.id] || s.goalOrder.length < MAX_GOALS)) { if (!s.goals[r.value.id]) s.goalOrder.push(r.value.id); s.goals[r.value.id] = r.value; } break; }
         case 'goal_entry': { const r = cleanGoalEntry(d); if (r.ok) s.goalEntries.push(Object.assign({ seq: e.seq }, r.value)); break; }
         case 'diet_prefs_set': { const r = cleanDietPrefs(d && d.prefs); if (r.ok) s.dietPrefs = r.value; break; }
-        case 'plan_revised': if (s.plan) applyRevision(s.plan, d, e); s.revisions.push({ seq: e.seq, ts: e.ts, src: e.src, reason: d.reason, changes: d.changes }); break;
+        case 'plan_revised': if (s.plan) { applyRevision(s.plan, d, e); if (d.changes && d.changes.schedule && s.profile) s.profile.days = ordered(s.plan.workouts.map((w) => w.weekday)); } s.revisions.push({ seq: e.seq, ts: e.ts, src: e.src, reason: d.reason, changes: d.changes }); break;
         case 'weight_logged': s.weights.push({ seq: e.seq, date: d.date, kg: d.kg }); break;
         case 'water_logged': { const date = String(d.date || ''), ml = Number(d.ml); if (validISO(date) && Number.isFinite(ml) && ml > 0 && ml <= 3000) s.water.push({ seq: e.seq, date, ml: clean(ml) }); break; }
         case 'measurement_logged': s.meas.push({ seq: e.seq, date: d.date, site: d.site, cm: d.cm }); break;
@@ -718,7 +718,155 @@
       // `was` remembers the old id, so sets logged while it was tracked still count towards that session being done.
       for (const w of plan.workouts) for (const ex of w.ex) if (ex.lift === gone) { ex.lift = null; ex.was = gone; ex.range = ex.range || '8-12'; }
     }
+    applyWorkoutChanges(plan, c);
     plan.history.push({ seq: e.seq, ts: e.ts, src: e.src || 'user', reason: d.reason || '', before, changes: c });
+  }
+
+  // ---------- changing the workouts themselves, and which weekday each one is on ----------
+  // Whatever arrives here (a person's form, a coach proposal, a backup file) is rebuilt from a whitelist, and one bad
+  // edit is skipped, never allowed to stop the rest of the log from loading. Session names are never changed, because
+  // moves, logged workouts and "done this week" all refer to them.
+  const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  function weekdayFromName(x) {
+    if (typeof x === 'number' && Number.isInteger(x) && x >= 0 && x <= 6) return x;
+    const t = String(x == null ? '' : x).toLowerCase().trim();
+    if (/^[0-6]$/.test(t)) return Number(t);
+    return t.length >= 3 ? WEEKDAY_NAMES.findIndex((n) => n === t || n.slice(0, 3) === t.slice(0, 3) && n.startsWith(t.slice(0, 3))) : -1;
+  }
+  function scheduleNow(plan) { const m = {}; for (const w of plan.workouts) m[w.name] = w.weekday; return m; }
+  // The weekday of every session on one date: the plan's own, until a permanent change took effect.
+  function weekdayMapAt(plan, date) {
+    const log = plan.weekdayLog;
+    if (Array.isArray(log) && log.length) { let m = null; for (const x of log) { if (x.from <= date) m = x.map; else break; } if (m) return m; }
+    return scheduleNow(plan);
+  }
+  // A full or partial { "Push": "Tuesday" } on top of the current schedule, checked: real sessions, real weekdays, nobody sharing a day.
+  function cleanSchedule(plan, raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || hasBadKeys(raw, 0)) return { ok: false, errors: ['That is not a schedule.'] };
+    const map = scheduleNow(plan), errors = [], names = plan.workouts.map((w) => w.name);
+    for (const k of Object.keys(raw)) {
+      const name = names.find((n) => n.toLowerCase() === String(k).toLowerCase().trim());
+      const d = weekdayFromName(raw[k]);
+      if (!name) errors.push('There is no session called "' + cleanStr(k, 30) + '". Sessions: ' + names.join(', ') + '.');
+      else if (d < 0) errors.push('"' + cleanStr(raw[k], 20) + '" is not a day of the week.');
+      else map[name] = d;
+    }
+    const seen = {};
+    for (const n of names) { if (seen[map[n]] != null) errors.push(seen[map[n]] + ' and ' + n + ' would both be on ' + WEEKDAY_NAMES[map[n]] + '. Give each session its own day.'); else seen[map[n]] = n; }
+    return errors.length ? { ok: false, errors } : { ok: true, map };
+  }
+  const EX_MAX = 12;
+  // "triceps", "glutes", "abs" and so on, folded into the groups the app uses: chest, back, shoulders, arms, legs, core, forearms.
+  const MUSCLE_ALIASES = { pecs: 'chest', lats: 'back', traps: 'back', delts: 'shoulders', shoulder: 'shoulders', biceps: 'arms', triceps: 'arms', arm: 'arms', quads: 'legs', quadriceps: 'legs', hamstrings: 'legs', glutes: 'legs', calves: 'legs', leg: 'legs', abs: 'core', obliques: 'core', forearm: 'forearms' };
+  function canonMuscle(x) {
+    const t = String(x == null ? '' : x).toLowerCase().trim();
+    if (LIFT_MUSCLES.includes(t) || t === 'forearms') return t;
+    return Object.prototype.hasOwnProperty.call(MUSCLE_ALIASES, t) ? MUSCLE_ALIASES[t] : 'other';
+  }
+  function cleanRange(x, dflt) { const t = String(x == null ? '' : x).replace(/\s/g, '').replace(/[\u2013\u2014]/g, '-'); return /^\d{1,3}(-\d{1,3})?$/.test(t) ? t : dflt; }
+  // One exercise for a session. Linked to a tracked lift only when that lift exists in the plan.
+  function cleanSessionExercise(plan, raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const lift = hasLift(plan, raw.lift) ? raw.lift : null;
+    const n = lift ? plan.lifts[lift].name : cleanStr(raw.n != null ? raw.n : raw.name, 60);
+    if (!n) return null;
+    const m = lift ? plan.lifts[lift].muscle : canonMuscle(raw.m != null ? raw.m : raw.muscle);
+    const sets = clamp(Math.round(Number(raw.sets)) || (lift ? plan.lifts[lift].sets || 3 : 3), 1, 8);
+    const rest = clamp(Math.round(Number(raw.rest != null ? raw.rest : raw.rest_seconds)) || (lift && plan.lifts[lift].cls === 'heavy' ? 150 : 90), 20, 300);
+    const out = { n, sets, range: lift ? '' : cleanRange(raw.range != null ? raw.range : raw.reps, '8-12'), rest, m };
+    if (lift) out.lift = lift;
+    return out;
+  }
+  function findSessionExercise(w, t) {
+    if (!t || typeof t !== 'object') return -1;
+    if (t.lift) { const i = w.ex.findIndex((x) => x.lift === t.lift); if (i >= 0) return i; }
+    const name = cleanStr(t.n != null ? t.n : t.name, 60);
+    if (!name) return -1;
+    const sl = slug(name), exact = w.ex.findIndex((x) => slug(x.n) === sl);
+    if (exact >= 0) return exact;
+    const near = w.ex.map((x, i) => [slug(x.n), i]).filter(([k]) => k.includes(sl) || sl.includes(k));
+    return near.length === 1 ? near[0][1] : -1;
+  }
+  // Applies a list of session edits to a plan in place. Returns { errors, notes }; a bad edit is reported and skipped.
+  function applySessionEdits(plan, edits) {
+    const errors = [], notes = [];
+    for (const e of (Array.isArray(edits) ? edits : []).slice(0, 20)) {
+      if (!e || typeof e !== 'object' || Array.isArray(e) || hasBadKeys(e, 0)) { errors.push('One edit was not understood.'); continue; }
+      const w = plan.workouts.find((x) => x.name === e.session);
+      if (!w) { errors.push('There is no session called "' + cleanStr(e.session, 30) + '".'); continue; }
+      const i = ['replace', 'remove', 'update'].includes(e.op) ? findSessionExercise(w, e.target) : -1;
+      const nm = cleanStr(e.target && (e.target.n || e.target.name) || '', 60) || 'that exercise';
+      if (['replace', 'remove', 'update'].includes(e.op) && i < 0) { errors.push(w.name + ' has no exercise called "' + nm + '".'); continue; }
+      if (e.op === 'remove') { notes.push('Removed ' + w.ex[i].n + ' from ' + w.name); w.ex.splice(i, 1); }
+      else if (e.op === 'replace' || e.op === 'add') {
+        const x = cleanSessionExercise(plan, e.to);
+        if (!x) { errors.push('The new exercise needs a name.'); continue; }
+        if (w.ex.some((y, j) => j !== i && exId(y) === exId(x))) { errors.push(x.n + ' is already in ' + w.name + '.'); continue; }
+        if (e.op === 'replace') { notes.push('Replaced ' + w.ex[i].n + ' with ' + x.n + ' in ' + w.name); w.ex[i] = x; }
+        else if (w.ex.length >= EX_MAX) errors.push(w.name + ' already has ' + EX_MAX + ' exercises.');
+        else { notes.push('Added ' + x.n + ' to ' + w.name); if (e.at === 'start') w.ex.unshift(x); else w.ex.push(x); }
+      } else if (e.op === 'update') {
+        const x = w.ex[i];
+        if (e.sets != null) { const n = clamp(Math.round(Number(e.sets)) || x.sets, 1, 8); x.sets = n; if (x.lift && hasLift(plan, x.lift)) plan.lifts[x.lift].sets = n; }
+        if (e.range != null && !x.lift) x.range = cleanRange(e.range, x.range);
+        if (e.rest != null) x.rest = clamp(Math.round(Number(e.rest)) || x.rest, 20, 300);
+        notes.push('Changed ' + x.n + ' in ' + w.name);
+      } else if (e.op === 'rewrite') {
+        const list = [], seen = new Set();
+        for (const it of (Array.isArray(e.exercises) ? e.exercises : []).slice(0, EX_MAX + 4)) {
+          let x = null;
+          if (it && it.keep) {
+            const own = findSessionExercise(w, it.keep);
+            if (own >= 0) x = JSON.parse(JSON.stringify(w.ex[own]));
+            else for (const o of plan.workouts) { const k = findSessionExercise(o, it.keep); if (k >= 0) { x = JSON.parse(JSON.stringify(o.ex[k])); break; } }
+          } else x = cleanSessionExercise(plan, it);
+          if (!x || seen.has(exId(x)) || list.length >= EX_MAX) continue;
+          seen.add(exId(x)); list.push(x);
+        }
+        if (!list.length) { errors.push('A rewritten ' + w.name + ' needs at least one exercise.'); continue; }
+        notes.push('Rewrote ' + w.name + ' (' + list.length + ' exercises)');
+        w.ex = list;
+      } else errors.push('One edit was not understood.');
+    }
+    // A tracked lift that is in no session any more stops being tracked; its logged sets stay in the data.
+    const placed = new Set();
+    for (const w of plan.workouts) for (const x of w.ex) if (x.lift) placed.add(x.lift);
+    for (const id of Object.keys(plan.lifts)) if (!placed.has(id) && lostLifts.has(id)) { notes.push('Stopped tracking ' + plan.lifts[id].name + ' (your logged sets stay)'); delete plan.lifts[id]; }
+    return { errors, notes };
+  }
+  // Lifts that were in a session at the start of an edit, so only ones the edit took out are dropped (a lift the
+  // person tracks without a session, on purpose, is left alone).
+  let lostLifts = new Set();
+  function applyWorkoutChanges(plan, c) {
+    const errors = [], notes = [];
+    lostLifts = new Set();
+    for (const w of plan.workouts) for (const x of w.ex) if (x.lift) lostLifts.add(x.lift);
+    // Lifts defined for new exercises, with no placing of their own: the session edits place them.
+    if (c.defineLifts && typeof c.defineLifts === 'object' && !Array.isArray(c.defineLifts)) {
+      for (const id of Object.keys(c.defineLifts)) {
+        if (!/^[a-z0-9_]{1,40}$/.test(id) || BAD_KEYS.includes(id) || hasLift(plan, id)) continue;
+        const l = cleanLift(c.defineLifts[id], id);
+        if (l) plan.lifts[id] = l;
+      }
+    }
+    if (Array.isArray(c.sessionEdits)) { const r = applySessionEdits(plan, c.sessionEdits); errors.push(...r.errors); notes.push(...r.notes); }
+    if (c.schedule && typeof c.schedule === 'object' && validISO(c.schedule.from)) {
+      const r = cleanSchedule(plan, c.schedule.map);
+      if (!r.ok) errors.push(...r.errors);
+      else {
+        if (!Array.isArray(plan.weekdayLog) || !plan.weekdayLog.length) plan.weekdayLog = [{ from: '0000-01-01', map: scheduleNow(plan) }];
+        plan.weekdayLog = plan.weekdayLog.filter((x) => x.from !== c.schedule.from).concat([{ from: c.schedule.from, map: r.map }]).sort((a, b) => (a.from < b.from ? -1 : 1)).slice(-60);
+        const last = plan.weekdayLog[plan.weekdayLog.length - 1].map;
+        for (const w of plan.workouts) w.weekday = last[w.name];
+        notes.push('Sessions moved to new weekdays from ' + c.schedule.from);
+      }
+    }
+    return { errors, notes };
+  }
+  // What a set of workout changes would do to a copy of this plan, without touching it: { ok, errors, notes, plan }.
+  function previewWorkoutChanges(plan, c) {
+    const copy = clone(plan), r = applyWorkoutChanges(copy, c || {});
+    return { ok: !r.errors.length, errors: r.errors, notes: r.notes, plan: copy };
   }
 
   // ---------- derived numbers ----------
@@ -1126,7 +1274,8 @@
   // ----- the suggested session for a day. The plan says a weekday; the person can move it. -----
   // Returns { session, planned, moved }: what is on for that date, what the plan had, and whether they differ.
   function sessionFor(plan, moves, date) {
-    const planned = plan.workouts.find((x) => x.weekday === weekdayOf(date)) || null;
+    const wm = weekdayMapAt(plan, date), wd = weekdayOf(date);
+    const planned = plan.workouts.find((x) => wm[x.name] === wd) || null;
     const mv = moves && moves[date];
     let session = planned;
     if (mv === 'rest') session = null;
@@ -1303,7 +1452,7 @@
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
     LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor, cleanPhotoAlign, photoAlignFor, normalizePhotoAlign,
-    validISO, hasLift, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
+    validISO, hasLift, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };

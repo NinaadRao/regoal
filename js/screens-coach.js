@@ -255,6 +255,6 @@
       } }),
       UI.card(h('div', { class: 'ct' }, 'What leaves your phone'),
         h('div', { class: 'muted' }, 'Only requests you trigger, sent straight from this device to ' + hostOf(cfg) + ' with your key: a summary of your numbers and workouts (activity types, minutes, estimated calories, streaks, today\'s food log; never your notes) for the coach, or the text you type when you ask for a food estimate. A photo only goes if you attach one yourself, in the coach chat or a food estimate. Not your name, not your progress photos or library. The key is never written into backups, logs or the repository.'),
-        h('div', { class: 'muted small' }, 'The coach cannot change anything by itself. It can suggest, and you tap Apply. Every change has an Undo.'))));
+        h('div', { class: 'muted small' }, 'The coach cannot change anything by itself. It can suggest (targets, exercises, your weekly schedule, a wrong weight), and you tap Apply. Every change has an Undo.'))));
   };
 })(self);

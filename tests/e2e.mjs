@@ -973,7 +973,7 @@ async function main() {
     await page.evaluate(() => { const st = Store.getState(), t = Engine.isoDate(new Date()); window.__rest = !Engine.sessionFor(st.plan, st.moves, t).session; });
     if (!(await page.evaluate(() => window.__rest))) {
       await route(page, '#/today');
-      await page.getByRole('button', { name: 'Change' }).first().click();
+      await page.locator('.todayhead').getByRole('button', { name: 'Change', exact: true }).click(); // not the date picker's Change button
       await page.locator('#sheets').getByRole('button', { name: /Skip it this week/ }).click();
       await page.waitForFunction(() => { const st = Store.getState(); return !Engine.sessionFor(st.plan, st.moves, Engine.isoDate(new Date())).session; });
     }
@@ -1050,6 +1050,103 @@ async function main() {
     await page.keyboard.press('Enter');
     await page.waitForSelector('text=That was rejected.');
     eq(await page.locator('.proposal').count(), n, 'no proposal card');
+  });
+
+  await step('coach: edits exercises, rewrites a session, moves sessions to new weekdays for good, corrects a weight; each needs a tap and has an Undo', async () => {
+    await page.unroute('https://api.anthropic.com/**');
+    let nextCall = null, replies = 0;
+    await page.route('https://api.anthropic.com/**', async (r) => {
+      if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: CORS });
+      const body = JSON.parse(r.request().postData() || '{}');
+      const last = body.messages[body.messages.length - 1];
+      const isResult = Array.isArray(last.content) && last.content.some((c) => c.type === 'tool_result');
+      const out = isResult ? textReply('Done, tap Apply.') : toolReply('On it.', nextCall.name, nextCall.input);
+      return r.fulfill({ status: 200, headers: Object.assign({ 'content-type': 'text/event-stream' }, CORS), body: out });
+    });
+    const ask = async (name, input, text) => {
+      nextCall = { name, input };
+      const n = await page.locator('.proposal').count();
+      await page.getByLabel('Message').fill(text);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction((k) => document.body.innerText.split('Done, tap Apply.').length - 1 > k, replies);
+      replies++;
+      return page.locator('.proposal').count().then((c) => c - n);
+    };
+    await route(page, '#/coach');
+    const plan0 = await page.evaluate(() => JSON.parse(JSON.stringify(Store.getState().plan)));
+    const names = plan0.workouts.map((w) => w.name);
+    ok(names.length >= 3, 'sessions: ' + names);
+    const sysSeen = await page.evaluate(() => JSON.stringify(Coach.buildContext(Store.getState(), Store.getSettings()).workouts));
+    ok(sysSeen.includes(names[0]) && sysSeen.includes(plan0.workouts[0].ex[0].n), 'the coach is shown every session and its exercises');
+
+    // 1. a session gets a totally different exercise set for the same muscles
+    const A = plan0.workouts[0], keepName = A.ex[0].n;
+    eq(await ask('propose_workout_edit', { reason: 'Variety', edits: [{ session: A.name, op: 'rewrite', exercises: [{ keep: keepName }, { name: 'Dips', muscle: 'triceps', sets: 3, reps: '8-12' }, { name: 'Landmine press', muscle: 'shoulders', sets: 3, reps: '8-10' }, { name: 'Arnold press', muscle: 'shoulders', weight: 20, unit: 'kg', equipment: 'db', sets: 3, reps: '8-10' }] }] }, 'make my first day different'), 1, 'a card');
+    const before = await page.evaluate((n) => Store.getState().plan.workouts.find((w) => w.name === n).ex.map((x) => x.n), A.name);
+    eq(before, A.ex.map((x) => x.n), 'nothing changes without a tap');
+    ok(/Arnold press/.test(await page.locator('.proposal').last().innerText()), 'the card shows the new exercises');
+    await page.locator('.proposal').last().getByRole('button', { name: 'Apply', exact: true }).click();
+    await page.waitForSelector('.proposal:last-of-type >> text=Applied');
+    const after = await page.evaluate((n) => { const p = Store.getState().plan; return { ex: p.workouts.find((w) => w.name === n).ex, lift: Object.values(p.lifts).find((l) => l.name === 'Arnold press') }; }, A.name);
+    eq(after.ex.map((x) => x.n), [keepName, 'Dips', 'Landmine press', 'Arnold press']);
+    ok(after.ex[3].lift && after.lift && after.lift.blockKg[0] > 0, 'a weight was given, so Arnold press is tracked');
+    ok(!after.ex[1].lift && after.ex[1].m === 'arms', 'Dips stays a plain exercise; triceps counts as arms');
+    await route(page, '#/today'); await route(page, '#/lifts');
+    ok((await page.locator('#screen').innerText()).includes('Arnold press'), 'it shows in the Lifts list');
+    await route(page, '#/coach');
+    await page.locator('.proposal').last().getByRole('button', { name: 'Undo' }).click();
+    await page.waitForFunction(({ n, e }) => JSON.stringify(Store.getState().plan.workouts.find((w) => w.name === n).ex.map((x) => x.n)) === JSON.stringify(e), { n: A.name, e: A.ex.map((x) => x.n) });
+    ok(await page.evaluate(() => !Object.values(Store.getState().plan.lifts).some((l) => l.name === 'Arnold press')), 'undo also removes the new lift');
+
+    // 2. swap one exercise
+    const B = plan0.workouts[1], target = B.ex.find((x) => !x.lift) || B.ex[0];
+    eq(await ask('propose_workout_edit', { reason: 'Shoulder hurts', edits: [{ session: B.name, op: 'replace', exercise: target.n, new: { name: 'Cable crossover', muscle: target.m, sets: 3, reps: '10-15' } }] }, 'swap that out'), 1);
+    await page.locator('.proposal').last().getByRole('button', { name: 'Apply', exact: true }).click();
+    await page.waitForSelector('.proposal:last-of-type >> text=Applied');
+    ok(await page.evaluate((n) => Store.getState().plan.workouts.find((w) => w.name === n).ex.some((x) => x.n === 'Cable crossover'), B.name), 'swapped in');
+    await page.locator('.proposal').last().getByRole('button', { name: 'Undo' }).click();
+    await page.waitForFunction((n) => !Store.getState().plan.workouts.find((w) => w.name === n).ex.some((x) => x.n === 'Cable crossover'), B.name);
+
+    // 3. weekdays, permanently: the first two sessions swap days
+    const wd = (w) => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][w.weekday];
+    const C = plan0.workouts[0], D = plan0.workouts[1];
+    const probe = () => page.evaluate(({ c, d }) => {
+      const st = Store.getState(), t = Engine.addDays(Engine.isoDate(new Date()), 14);
+      let dayC = null, dayD = null;
+      for (let i = 0; i < 7; i++) { const dt = Engine.addDays(t, i), s = Engine.sessionFor(st.plan, st.moves || {}, dt).session; if (s && s.name === c) dayC = Engine.weekdayOf(dt); if (s && s.name === d) dayD = Engine.weekdayOf(dt); }
+      return { dayC, dayD, days: st.profile.days.slice() };
+    }, { c: C.name, d: D.name });
+    const was = await probe();
+    eq(was.dayC, C.weekday); eq(was.dayD, D.weekday);
+    eq(await ask('propose_schedule_change', { reason: 'I prefer this', moves: [{ session: C.name, weekday: wd(D) }, { session: D.name, weekday: wd(C) }] }, 'swap those two days for good'), 1);
+    eq((await probe()).dayC, C.weekday, 'unchanged until Apply');
+    await page.locator('.proposal').last().getByRole('button', { name: 'Apply', exact: true }).click();
+    await page.waitForSelector('.proposal:last-of-type >> text=Applied');
+    const now = await probe();
+    eq(now.dayC, D.weekday); eq(now.dayD, C.weekday);
+    eq(now.days.slice().sort(), was.days.slice().sort(), 'same training days overall');
+    const old = await page.evaluate(({ c }) => { const st = Store.getState(), t = Engine.addDays(Engine.isoDate(new Date()), -35); for (let i = 0; i < 7; i++) { const dt = Engine.addDays(t, i), s = Engine.sessionFor(st.plan, {}, dt).session; if (s && s.name === c) return Engine.weekdayOf(dt); } return null; }, { c: C.name });
+    eq(old, C.weekday, 'a month ago still shows the old day');
+    await page.locator('.proposal').last().getByRole('button', { name: 'Undo' }).click();
+    await page.waitForFunction(({ c, w }) => { const st = Store.getState(); const x = st.plan.workouts.find((q) => q.name === c); return x.weekday === w && !st.plan.weekdayLog; }, { c: C.name, w: C.weekday });
+    eq((await probe()).dayC, C.weekday, 'undone');
+
+    // 4. a mistake in the plan: a weight that is far off
+    const L = Object.values(plan0.lifts).find((l) => !l.bw);
+    const wk = await page.evaluate(() => Engine.clamp(Engine.weekOf(Store.getState().plan.startDate, Engine.isoDate(new Date())), 1, Engine.planWeeks(Store.getState().plan)));
+    const kgNow = await page.evaluate(({ id, wk }) => { const p = Store.getState().plan; return Engine.liftTarget(p.lifts[id], wk, Engine.targetOpts(p)).kg; }, { id: L.id, wk });
+    eq(await ask('propose_lift_correction', { lift: L.name, weight: Math.round(kgNow * 0.6), unit: 'kg', reason: 'Plan said too heavy' }, 'that weight is way too heavy'), 1);
+    await page.locator('.proposal').last().getByRole('button', { name: 'Apply', exact: true }).click();
+    await page.waitForSelector('.proposal:last-of-type >> text=Applied');
+    const kgAfter = await page.evaluate(({ id, wk }) => { const p = Store.getState().plan; return Engine.liftTarget(p.lifts[id], wk, Engine.targetOpts(p)).kg; }, { id: L.id, wk });
+    ok(kgAfter < kgNow * 0.75 && kgAfter > kgNow * 0.5, 'a 40% cut went through, beyond the 10% limit: ' + kgNow + ' to ' + kgAfter);
+    await page.locator('.proposal').last().getByRole('button', { name: 'Undo' }).click();
+    await page.waitForFunction(({ id, wk, k }) => { const p = Store.getState().plan; return Engine.liftTarget(p.lifts[id], wk, Engine.targetOpts(p)).kg === k; }, { id: L.id, wk, k: kgNow });
+
+    // 5. rubbish is refused with no card
+    eq(await ask('propose_workout_edit', { reason: 'x', edits: [{ session: 'Nonexistent', op: 'add', new: { name: 'X' } }] }, 'bad one'), 0);
+    eq(await ask('propose_schedule_change', { reason: 'x', moves: [{ session: C.name, weekday: wd(D) }] }, 'clash'), 0, 'two sessions on one day is refused');
+    eq(await ask('propose_lift_correction', { lift: L.name, weight: kgNow * 20, unit: 'kg', reason: 'x' }, 'silly'), 0, 'more than 4x is not a correction');
   });
 
   await step('backup keeps workouts and moved sessions, and a hostile workout in a file is cleaned', async () => {
