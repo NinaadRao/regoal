@@ -178,8 +178,10 @@ select.inp { appearance: none; }
 .toast.warn { background: var(--coral); }
 .overlay { position: fixed; inset: 0; background: rgba(5, 9, 8, 0.66); display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
 .sheet { width: 100%; max-width: 480px; max-height: 92dvh; overflow-y: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 22px 22px 0 0; padding: 18px var(--gut) calc(16px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+.sheet-head { position: sticky; top: -18px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -18px 0 0; padding: 18px 0 6px; background: var(--paper); }
 .sheet-title { font-family: var(--fd); font-weight: 800; font-size: 24px; }
-.sheet-actions { display: flex; gap: 10px; }
+.sheet-x { flex: none; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.sheet-actions { position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom)); display: flex; gap: 10px; margin-bottom: calc(-16px - env(safe-area-inset-bottom)); padding: 10px 0 calc(16px + env(safe-area-inset-bottom)); background: var(--paper); }
 .sheet-actions .btn { flex: 1; }
 
 /* Today */

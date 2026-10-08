@@ -27,7 +27,7 @@ const srv = http.createServer((q, r) => {
 let passed = 0; const failures = [];
 async function step(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
-  catch (e) { failures.push(name + ': ' + (e && e.message ? e.message.split('\n')[0] : e)); console.log('  FAIL ' + name + '\n       ' + (e && e.message ? e.message.split('\n').slice(0, 3).join('\n       ') : e)); }
+  catch (e) { failures.push(name + ': ' + (e && e.message ? e.message.split('\n')[0] : e)); if (process.env.TRACE) console.log(String(e.stack).split('\n').filter((l) => /e2e.mjs/.test(l)).slice(0,3).join('\n')); console.log('  FAIL ' + name + '\n       ' + (e && e.message ? e.message.split('\n').slice(0, 3).join('\n       ') : e)); }
 }
 const eq = (a, b, m) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error((m || 'not equal') + ': got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b)); };
 const ok = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
@@ -1008,6 +1008,30 @@ async function main() {
     await page.locator('.overlay').last().getByRole('button', { name: 'Close' }).click();
   });
 
+  await step('sheets: the long "change today\'s plan" window can always be dismissed (top X, a Close that stays in view, Escape, tapping outside)', async () => {
+    const vp = page.viewportSize();
+    await page.setViewportSize({ width: 360, height: 520 });
+    await route(page, '#/today');
+    const open = async () => {
+      const btn = page.locator('.todayhead').getByRole('button', { name: 'Change', exact: true });
+      if (await btn.count()) await btn.click(); else await page.getByRole('button', { name: 'Train anyway' }).click();
+      await page.locator('#sheets .sheet').waitFor();
+    };
+    await open();
+    const inView = async (loc) => { const b = await loc.boundingBox(); return b && b.y >= 0 && b.y + b.height <= 520 && b.x >= 0; };
+    ok(await inView(page.locator('#sheets .sheet-x')), 'the X is on screen at the top');
+    ok(await inView(page.locator('#sheets .sheet-actions .btn').first()), 'Close is on screen without scrolling');
+    await page.locator('#sheets .sheet').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    ok(await inView(page.locator('#sheets .sheet-x')), 'the X stays on screen after scrolling down');
+    await page.getByRole('button', { name: 'Dismiss this window' }).click();
+    eq(await page.locator('#sheets .sheet').count(), 0, 'X closes it');
+    await open(); await page.keyboard.press('Escape');
+    eq(await page.locator('#sheets .sheet').count(), 0, 'Escape closes it');
+    await open(); await page.locator('#sheets .overlay').click({ position: { x: 5, y: 5 } });
+    eq(await page.locator('#sheets .sheet').count(), 0, 'tapping outside closes it');
+    await page.setViewportSize(vp);
+  });
+
   await step('coach: gets an activity summary without notes; a workout proposal needs a tap and undo works', async () => {
     await page.unroute('https://api.anthropic.com/**');
     const reqs = [];
@@ -1053,6 +1077,7 @@ async function main() {
   });
 
   await step('coach: edits exercises, rewrites a session, moves sessions to new weekdays for good, corrects a weight; each needs a tap and has an Undo', async () => {
+    page.setDefaultTimeout(15000); // five AI round trips plus plan rebuilds: give a slow machine room
     await page.unroute('https://api.anthropic.com/**');
     let nextCall = null, replies = 0;
     await page.route('https://api.anthropic.com/**', async (r) => {
@@ -1060,19 +1085,23 @@ async function main() {
       const body = JSON.parse(r.request().postData() || '{}');
       const last = body.messages[body.messages.length - 1];
       const isResult = Array.isArray(last.content) && last.content.some((c) => c.type === 'tool_result');
+      if (isResult && process.env.TRACE) console.log('TOOLRESULT', JSON.stringify(last.content.map((c) => c.content)));
       const out = isResult ? textReply('Done, tap Apply.') : toolReply('On it.', nextCall.name, nextCall.input);
       return r.fulfill({ status: 200, headers: Object.assign({ 'content-type': 'text/event-stream' }, CORS), body: out });
     });
     const ask = async (name, input, text) => {
       nextCall = { name, input };
       const n = await page.locator('.proposal').count();
-      await page.getByLabel('Message').fill(text);
-      await page.keyboard.press('Enter');
+      const box = page.getByLabel('Message');
+      await box.fill(text);
+      await box.press('Enter');
       await page.waitForFunction((k) => document.body.innerText.split('Done, tap Apply.').length - 1 > k, replies);
       replies++;
+      await page.waitForFunction((k) => document.querySelectorAll('.proposal').length > k, n, { timeout: 1500 }).catch(() => {}); // the reply text streams in before the cards are drawn
       return page.locator('.proposal').count().then((c) => c - n);
     };
     await route(page, '#/coach');
+    await page.waitForTimeout(400); // let the coach screen finish drawing before typing into it
     const plan0 = await page.evaluate(() => JSON.parse(JSON.stringify(Store.getState().plan)));
     const names = plan0.workouts.map((w) => w.name);
     ok(names.length >= 3, 'sessions: ' + names);
@@ -1147,6 +1176,7 @@ async function main() {
     eq(await ask('propose_workout_edit', { reason: 'x', edits: [{ session: 'Nonexistent', op: 'add', new: { name: 'X' } }] }, 'bad one'), 0);
     eq(await ask('propose_schedule_change', { reason: 'x', moves: [{ session: C.name, weekday: wd(D) }] }, 'clash'), 0, 'two sessions on one day is refused');
     eq(await ask('propose_lift_correction', { lift: L.name, weight: kgNow * 20, unit: 'kg', reason: 'x' }, 'silly'), 0, 'more than 4x is not a correction');
+    page.setDefaultTimeout(5000);
   });
 
   await step('backup keeps workouts and moved sessions, and a hostile workout in a file is cleaned', async () => {

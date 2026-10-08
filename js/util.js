@@ -107,10 +107,10 @@
     }
     const wrap = h('div', { class: 'overlay', onclick: (e) => { if (e.target === wrap) close(); } },
       h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
-        h('div', { class: 'sheet-title' }, title), body, (actions || []).length ? bar : null));
+        h('div', { class: 'sheet-head' }, h('div', { class: 'sheet-title' }, title), h('button', { class: 'iconbtn sheet-x', type: 'button', 'aria-label': 'Dismiss this window', onclick: close }, icon('x', 20))), body, (actions || []).length ? bar : null));
     host.appendChild(wrap);
     document.addEventListener('keydown', onKey);
-    const first = wrap.querySelector('input,select,textarea,button');
+    const first = wrap.querySelector('input,select,textarea,button:not(.sheet-x)');
     if (first) first.focus();
     return close;
   }
