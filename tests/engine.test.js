@@ -659,3 +659,48 @@ test('a mangled revision in a backup never stops the log from loading', () => {
   const s = E.project(ev);
   assert.equal(s.plan.workouts.length, plan.workouts.length);
 });
+
+// ---------- standard portions and sessions added on top of a day ----------
+test('a standard portion is set once per food, cleared, undone, and refuses nonsense', () => {
+  const plan = planFor();
+  const ev = (seq, type, data) => ({ seq, ts: 't', type, data });
+  const base = [ev(1, 'profile_created', { profile: { weightKg: 80 }, plan })];
+  assert.deepEqual(Object.keys(E.project(base).portions), []);
+  let s = E.project(base.concat([ev(2, 'food_portion_set', { key: '  Sona Masoori RICE ', g: 150 })]));
+  assert.equal(s.portions['sona masoori rice'], 150);
+  assert.equal(E.portionKey('Sona Masoori Rice'), 'sona masoori rice');
+  s = E.project(base.concat([ev(2, 'food_portion_set', { key: 'rice', g: 150 }), ev(3, 'food_portion_set', { key: 'rice', g: 180.26 })]));
+  assert.equal(s.portions.rice, 180.3, 'the latest one wins');
+  s = E.project(base.concat([ev(2, 'food_portion_set', { key: 'rice', g: 150 }), ev(3, 'food_portion_set', { key: 'rice', g: null })]));
+  assert.equal(s.portions.rice, undefined, 'g null clears it');
+  s = E.project(base.concat([ev(2, 'food_portion_set', { key: 'rice', g: 150 }), ev(3, 'food_portion_set', { key: 'rice', g: 200 }), ev(4, 'event_voided', { target: 3 })]));
+  assert.equal(s.portions.rice, 150, 'undo goes back to the earlier one');
+  for (const bad of [{ key: 'rice', g: 0 }, { key: 'rice', g: 5000 }, { key: 'rice', g: 'lots' }, { key: '', g: 100 }, { g: 100 }, null]) {
+    assert.equal(E.cleanStdPortion(bad).ok, false, JSON.stringify(bad));
+  }
+  s = E.project(base.concat([ev(2, 'food_portion_set', { key: '__proto__', g: 100 }), ev(3, 'food_portion_set', { key: 'constructor', g: 100 })]));
+  assert.equal({}.polluted, undefined);
+  assert.equal(Object.getPrototypeOf(s.portions), null);
+});
+
+test('a session added on top of a day sits beside the planned one and moves nothing', () => {
+  const plan = planFor();
+  const ev = (seq, type, data) => ({ seq, ts: 't', type, data });
+  const base = [ev(1, 'profile_created', { profile: { weightKg: 80 }, plan })];
+  const mon = '2026-01-05'; // Monday: Push
+  const main = E.sessionFor(plan, {}, mon).session.name;
+  const other = plan.workouts.find((w) => w.name !== main).name;
+  let s = E.project(base.concat([ev(2, 'session_added', { date: mon, session: other }), ev(3, 'session_added', { date: mon, session: other })]));
+  assert.deepEqual(E.extrasFor(s, mon).map((w) => w.name), [other], 'once, however many times it was added');
+  assert.equal(E.sessionFor(s.plan, s.moves, mon).session.name, main, 'the planned session is untouched');
+  for (const d of ['2026-01-06', '2026-01-07', '2026-01-12']) assert.equal(E.sessionFor(s.plan, s.moves, d).session.name, E.sessionFor(plan, {}, d).session.name, d + ' unchanged');
+  assert.deepEqual(Object.keys(s.moves), []);
+  // adding the day's own session, an unknown session, or a bad date shows nothing extra
+  s = E.project(base.concat([ev(2, 'session_added', { date: mon, session: main }), ev(3, 'session_added', { date: mon, session: 'Nope' }), ev(4, 'session_added', { date: 'soon', session: other })]));
+  assert.deepEqual(E.extrasFor(s, mon), []);
+  // never more than three on a day, and undo takes it away again
+  s = E.project(base.concat(plan.workouts.map((w, i) => ev(2 + i, 'session_added', { date: '2026-01-10', session: w.name }))));
+  assert.ok(s.extras['2026-01-10'].length <= 3);
+  s = E.project(base.concat([ev(2, 'session_added', { date: mon, session: other }), ev(3, 'event_voided', { target: 2 })]));
+  assert.deepEqual(E.extrasFor(s, mon), []);
+});

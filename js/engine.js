@@ -631,7 +631,7 @@
   function project(events) {
     const voided = new Set();
     for (const e of events) if (e.type === 'event_voided') voided.add(e.data.target);
-    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), exSwitches: Object.create(null), photoAligns: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
+    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), extras: Object.create(null), extraSeqs: Object.create(null), portions: Object.create(null), exSwitches: Object.create(null), photoAligns: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
     for (const e of events) {
       if (voided.has(e.seq) || e.type === 'event_voided') continue;
       const d = e.data || {};
@@ -654,6 +654,12 @@
         case 'session_moved': {
           const date = String(d.date || ''), name = cleanStr(d.session, 40);
           if (validISO(date) && name) s.moves[date] = name;
+          break;
+        }
+        case 'food_portion_set': { const r = cleanStdPortion(d); if (r.ok) { if (r.value.g == null) delete s.portions[r.value.key]; else s.portions[r.value.key] = r.value.g; } break; }
+        case 'session_added': {
+          const date = String(d.date || ''), name = cleanStr(d.session, 40);
+          if (validISO(date) && name) { const a = s.extras[date] || (s.extras[date] = []); if (!a.includes(name) && a.length < 3) { a.push(name); s.extraSeqs[date + '|' + name] = e.seq; } }
           break;
         }
         case 'exercise_switched': { const r = cleanExerciseSwitch(d); if (r.ok) s.exSwitches[r.value.date + '|' + r.value.from] = Object.assign({ seq: e.seq }, r.value); break; }
@@ -1030,7 +1036,7 @@
   }
 
   // ---------- backup / import validation ----------
-  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'photo_aligned', 'profile_edited', 'diet_prefs_set', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
+  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'photo_aligned', 'profile_edited', 'diet_prefs_set', 'food_portion_set', 'session_added', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
   const BAD_KEYS = ['__proto__', 'constructor', 'prototype'];
   function hasBadKeys(o, depth) {
     if (o === null || typeof o !== 'object') return false;
@@ -1095,6 +1101,27 @@
     }
     if (errors.length) return { ok: false, errors };
     return { ok: true, value: out };
+  }
+  // ---------- one standard portion per food ----------
+  // The number of grams a person usually eats of a food, set once. Logging then starts from it and they only type the
+  // grams, so there is never a "1.25x of 1.25x" to work out. g null clears it. Keyed by the food's name, lower case.
+  const portionKey = (name) => cleanStr(name, 80).toLowerCase();
+  function cleanStdPortion(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, errors: ['That is not a portion.'] };
+    const key = portionKey(raw.key);
+    if (!key) return { ok: false, errors: ['Which food?'] };
+    if (raw.g == null) return { ok: true, value: { key, g: null } };
+    const g = Number(raw.g);
+    if (!Number.isFinite(g) || g < 1 || g > 3000) return { ok: false, errors: ['A portion is between 1 and 3,000 g.'] };
+    return { ok: true, value: { key, g: Math.round(g * 10) / 10 } };
+  }
+  // The other sessions added on top of a day's own (a catch-up, a second session). Nothing else about the plan moves.
+  function extrasFor(state, date) {
+    const names = (state.extras && state.extras[date]) || [];
+    const main = sessionFor(state.plan, state.moves, date).session;
+    const out = [];
+    for (const n of names) { const w = state.plan.workouts.find((x) => x.name === n); if (w && !(main && main.name === n)) out.push(w); }
+    return out;
   }
   function validateEvents(events, max) {
     if (!Array.isArray(events)) return 'Events must be a list.';
@@ -1452,7 +1479,7 @@
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
     LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor, cleanPhotoAlign, photoAlignFor, normalizePhotoAlign,
-    validISO, hasLift, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
+    validISO, hasLift, portionKey, cleanStdPortion, extrasFor, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };

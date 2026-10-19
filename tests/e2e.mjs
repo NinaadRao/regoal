@@ -371,6 +371,98 @@ async function main() {
     ok(Math.abs(f.protein - 61.2) < 1, 'protein doubled with the amount, got ' + f.protein);
   });
 
+  await step('Fuel: a standard portion is set once, a reused food starts from it, and amounts never stack on the last one', async () => {
+    const openSalmon = async () => {
+      await page.getByRole('button', { name: 'Add food' }).click();
+      await page.getByLabel('Search foods').fill('salmon atlantic farmed raw');
+      await page.locator('.result', { hasText: 'Fish, salmon, Atlantic, farmed, raw' }).first().click();
+    };
+    const lastFood = async () => (await events(page)).filter((e) => e.type === 'food_logged').pop().data;
+    // no standard yet: starts at 100 g; typing another amount offers to make it the standard
+    await openSalmon();
+    eq(await page.getByLabel('Amount').inputValue(), '100');
+    await page.getByLabel('Amount').fill('125');
+    await page.getByRole('button', { name: 'Make 125 g my standard portion' }).click();
+    await page.waitForFunction(() => Store.getState().portions['fish, salmon, atlantic, farmed, raw'] === 125);
+    eq(await page.getByLabel('Amount').inputValue(), '125', 'the screen now starts from the standard');
+    ok(/125 g/.test(await page.locator('#sheets').last().innerText()), 'the standard is shown');
+    await page.getByRole('button', { name: 'Log it' }).click();
+    await page.waitForTimeout(250);
+    let f = await lastFood();
+    eq([f.serving, f.kcal], ['125 g', 260]);
+    // reused from "your log": the numbers are per 100 g again, so 160 g is just 160 g
+    await page.getByRole('button', { name: 'Add food' }).click();
+    await page.getByLabel('Search foods').fill('salmon atlantic');
+    const recent = page.locator('.result', { hasText: 'from your log' }).first();
+    ok(/100 g/.test(await recent.innerText()), 'a reused food is listed per 100 g, not as the last portion: ' + (await recent.innerText()).replace(/\n/g, ' '));
+    await recent.click();
+    eq(await page.getByLabel('Amount').inputValue(), '125', 'starts at the standard');
+    await page.getByLabel('Amount').fill('160');
+    await page.getByRole('button', { name: 'Log it' }).click();
+    await page.waitForTimeout(250);
+    f = await lastFood();
+    eq([f.serving, f.kcal], ['160 g', 333], 'exactly 160 g of the food, no 1.25 x anything');
+    eq(f.portion.unit, 'g');
+    // change the standard once, for good
+    await openSalmon();
+    await page.getByRole('button', { name: 'Change the standard portion' }).click();
+    await page.getByRole('spinbutton', { name: 'Standard portion' }).fill('200');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction(() => Store.getState().portions['fish, salmon, atlantic, farmed, raw'] === 200);
+    eq(await page.getByLabel('Amount').inputValue(), '200');
+    await page.getByRole('button', { name: 'Dismiss this window' }).last().click();
+    // undo of the setting goes back to the earlier one, and a nonsense value is refused
+    const seq = await page.evaluate(() => Store.getEvents().filter((e) => e.type === 'food_portion_set').pop().seq);
+    await page.evaluate((q) => Store.voidEvent(q), seq);
+    eq(await page.evaluate(() => Store.getState().portions['fish, salmon, atlantic, farmed, raw']), 125);
+    await openSalmon();
+    await page.getByRole('button', { name: 'Change the standard portion' }).click();
+    await page.getByRole('spinbutton', { name: 'Standard portion' }).fill('99999');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    ok(await page.locator('.toast.warn').count() > 0, 'refused with a message');
+    eq(await page.evaluate(() => Store.getState().portions['fish, salmon, atlantic, farmed, raw']), 125, 'unchanged');
+    await page.locator('#sheets .overlay').last().click({ position: { x: 5, y: 5 } });
+    await page.getByRole('button', { name: 'Dismiss this window' }).last().click();
+    // the standard rides along in a backup (it is part of the log)
+    ok((await events(page)).some((e) => e.type === 'food_portion_set'), 'stored as an event');
+  });
+
+  await step('Fuel: a food counted in servings can be given a serving weight and then logged in grams', async () => {
+    await page.getByRole('button', { name: 'Add food' }).click();
+    await page.getByRole('tab', { name: 'Manual' }).click();
+    await page.getByLabel('What was it?').fill('Veg curry bowl');
+    await page.getByLabel('Calories', { exact: true }).fill('300');
+    await page.getByLabel('Protein', { exact: true }).fill('10'); await page.getByLabel('Carbs', { exact: true }).fill('35'); await page.getByLabel('Fat', { exact: true }).fill('12');
+    await page.getByRole('button', { name: 'Log it' }).click();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'Add food' }).click();
+    await page.getByLabel('Search foods').fill('veg curry');
+    await page.locator('.result', { hasText: 'Veg curry bowl' }).first().click();
+    ok(await page.getByLabel(/Servings of/).count() === 1, 'counted in servings until a weight is set');
+    await page.getByRole('button', { name: /set what one serving weighs/ }).click();
+    await page.getByRole('spinbutton', { name: 'One serving weighs' }).fill('250');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction(() => Store.getState().portions['veg curry bowl|serving'] === 250);
+    eq(await page.getByLabel('Amount').inputValue(), '250');
+    await page.getByLabel('Amount').fill('125');
+    await page.waitForSelector('text=150 kcal');
+    await page.getByRole('button', { name: 'Log it' }).click();
+    await page.waitForTimeout(250);
+    let f = (await events(page)).filter((e) => e.type === 'food_logged').pop().data;
+    eq([f.name, f.kcal, f.serving], ['Veg curry bowl', 150, '125 g']);
+    eq([f.portion.unit, f.portion.amount], ['x', 0.5]);
+    // editing it later is in grams too
+    await page.locator('.foodrow', { hasText: 'Veg curry bowl' }).last().click();
+    eq(await page.getByLabel('Amount').inputValue(), '125');
+    await page.getByLabel('Amount').fill('500');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForTimeout(300);
+    f = (await events(page)).filter((e) => e.type === 'food_logged').pop().data;
+    eq([f.kcal, f.serving], [600, '500 g']);
+    // another food named the same by database does not borrow this weight
+    eq(await page.evaluate(() => Store.getState().portions['veg curry bowl']), undefined);
+  });
+
   await step('Fuel: everyday Indian names find USDA foods, and the filter choice is remembered', async () => {
     await page.getByRole('button', { name: 'Add food' }).click();
     eq(await page.getByRole('button', { name: 'Non-veg', exact: true }).getAttribute('aria-pressed'), 'true', 'the last filter is remembered');
@@ -471,6 +563,7 @@ async function main() {
   });
 
   await step('Fuel: editing an AI-estimated entry shows how it was worked out, and reusing it from Find carries that forward', async () => {
+    ok(/Made of: .*Rajma, cooked/.test(await page.locator('.foodrow', { hasText: 'Rajma chawal' }).first().innerText()), 'the Fuel list names the ingredients an AI estimate was made of');
     await page.getByRole('button', { name: 'Edit Rajma chawal' }).first().click();
     const sheet = page.locator('#sheets').last();
     await sheet.getByText('How it was worked out').waitFor();
@@ -478,7 +571,7 @@ async function main() {
     eq(await rows.count(), 2, 'both ingredient line items are shown');
     ok(/Rajma, cooked/.test(await rows.nth(0).innerText()) && /225 kcal/.test(await rows.nth(0).innerText()), 'first ingredient and its calories: ' + (await rows.nth(0).innerText()));
     ok(/Rice, cooked/.test(await rows.nth(1).innerText()), 'second ingredient');
-    ok(/does not rescale/.test(await sheet.innerText()), 'a caption clarifies this is the original estimate');
+    ok(/From the original estimate/.test(await sheet.innerText()), 'a caption clarifies this is the original estimate');
     await page.keyboard.press('Escape'); // editSheet has no Cancel action; Escape dismisses it
     // Reuse it from Find: the ingredient breakdown should carry over to the new entry too, not just the macros.
     const before2 = await page.evaluate(() => Store.getState().foods.length);
@@ -486,6 +579,11 @@ async function main() {
     const addSheet = page.locator('#sheets').last();
     await addSheet.getByRole('tab', { name: 'Find' }).click();
     await addSheet.locator('.result', { hasText: 'Rajma chawal' }).first().click();
+    await addSheet.getByText('Made of', { exact: true }).waitFor();
+    eq(await addSheet.locator('.itemrow').count(), 2, 'reusing shows the ingredients before logging');
+    await addSheet.getByLabel(/Servings of/).fill('2');
+    ok(/450 kcal/.test(await addSheet.locator('.itemrow').first().innerText()), 'ingredient calories follow the amount: ' + (await addSheet.locator('.itemrow').first().innerText()).replace(/\n/g, ' '));
+    await addSheet.getByLabel(/Servings of/).fill('1');
     await addSheet.getByRole('button', { name: 'Log it' }).click();
     await page.waitForFunction((n) => Store.getState().foods.length > n, before2);
     const logged = await page.evaluate(() => Store.getState().foods.slice(-1)[0]);
@@ -1006,6 +1104,37 @@ async function main() {
     ok(/Targets shown are for week \d+ of the plan/.test(detail), 'not just the name: shows exercises and targets');
     await overlay.getByRole('button', { name: 'Close' }).click();
     await page.locator('.overlay').last().getByRole('button', { name: 'Close' }).click();
+  });
+
+  await step('today: a session can be added on top of the day without moving or clearing anything else in the week', async () => {
+    await route(page, '#/today');
+    const snap = () => page.evaluate(() => { const st = Store.getState(), t = Engine.isoDate(new Date()); return { moves: JSON.stringify(st.moves), week: JSON.stringify(Engine.weekPlan(st, Engine.weekOf(st.plan.startDate, t), t)), main: (Engine.sessionFor(st.plan, st.moves, t).session || {}).name || null, names: st.plan.workouts.map((w) => w.name) }; });
+    const before = await snap();
+    const other = before.names.find((n) => n !== before.main);
+    const openChange = async () => {
+      const b = page.locator('.todayhead').getByRole('button', { name: 'Change', exact: true });
+      if (await b.count()) await b.click(); else await page.getByRole('button', { name: 'Train anyway' }).click();
+    };
+    await openChange();
+    const sh = page.locator('#sheets').last();
+    ok(/nothing else moves or is cleared/.test(await sh.innerText()), 'the sheet explains Add as well');
+    // both ways are offered for the same session: swap (a row naming what it does to the week) and add
+    ok(await sh.getByRole('button', { name: 'Add ' + other + ' as well' }).count() === 1, 'an Add option for each other session');
+    await sh.getByRole('button', { name: 'Add ' + other + ' as well' }).click();
+    await page.waitForFunction((n) => (Store.getState().extras[Engine.isoDate(new Date())] || []).includes(n), other);
+    const after = await snap();
+    eq([after.moves, after.week, after.main], [before.moves, before.week, before.main], 'no session was moved, cleared or swapped');
+    await route(page, '#/today');
+    ok(await page.locator('#screen').getByText(other + ' day', { exact: true }).count() === 1, 'the added session has its own card on Today');
+    ok(/added on top of/.test(await page.locator('#screen').innerText()), 'and says so');
+    await openChange();
+    eq(await page.locator('#sheets').last().getByRole('button', { name: 'Add ' + other + ' as well' }).count(), 0, 'it cannot be added twice');
+    await page.getByRole('button', { name: 'Dismiss this window' }).last().click();
+    await page.getByRole('button', { name: 'Take ' + other + ' off today' }).click();
+    await page.waitForFunction((n) => !(Store.getState().extras[Engine.isoDate(new Date())] || []).includes(n), other);
+    await route(page, '#/today');
+    eq(await page.locator('#screen').getByText(other + ' day', { exact: true }).count(), 0, 'removed again');
+    eq((await snap()).week, before.week);
   });
 
   await step('sheets: the long "change today\'s plan" window can always be dismissed (top X, a Close that stays in view, Escape, tapping outside)', async () => {

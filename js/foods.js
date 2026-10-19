@@ -225,6 +225,10 @@
   }
 
   // Foods the person has logged before, most recent first, deduplicated by name (so their own dishes are one tap away).
+  // A reused food always comes back at its BASIS, never at the last amount that was eaten: a food logged by weight is a
+  // per-100 g food again (type the grams), and anything else is one serving as first logged. Otherwise every reuse would
+  // start from the previous change (100 g, then 1.25x, then 160 g as 1.28x of that) and the multipliers would pile up.
+  const fin = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x < 1e5;
   function recents(foods, limit) {
     const seen = new Set(), out = [];
     for (let i = foods.length - 1; i >= 0 && out.length < (limit || 8); i--) {
@@ -232,7 +236,20 @@
       const k = String(f.name || '').toLowerCase();
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      out.push({ id: 'r' + f.seq, name: f.name, serving: f.serving || 'as logged', kcal: f.kcal, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0, recent: true, meal: f.meal, diet: 0, ai: f.ai || null });
+      const p = f.portion, b = p && p.base;
+      const ok = b && typeof b === 'object' && fin(b.kcal) && fin(b.protein) && fin(b.carbs) && fin(b.fat) && (p.unit === 'g' || p.unit === 'x');
+      const common = { id: 'r' + f.seq, name: f.name, recent: true, meal: f.meal, diet: 0, ai: f.ai || null };
+      if (ok && p.unit === 'g') out.push(Object.assign(common, { serving: '100 g', kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat, per100: true, src: f.source === 'mylist' ? 1 : 0 }));
+      else if (ok) out.push(Object.assign(common, { serving: String(p.label || f.serving || 'as logged').slice(0, 60), kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat }));
+      else {
+        // Older entries have no stored basis, but one logged as "125 g" still tells us its grams.
+        const g = /^(\d+(?:\.\d+)?) g$/.exec(String(f.serving || ''));
+        const grams = g ? Number(g[1]) : 0;
+        if (grams >= 1 && grams <= 3000) {
+          const per = (x) => Math.round(((Number(x) || 0) * 100 / grams) * 10) / 10;
+          out.push(Object.assign(common, { serving: '100 g', kcal: Math.round((Number(f.kcal) || 0) * 100 / grams), protein: per(f.protein), carbs: per(f.carbs), fat: per(f.fat), per100: true, src: f.source === 'mylist' ? 1 : 0 }));
+        } else out.push(Object.assign(common, { serving: f.serving || 'as logged', kcal: f.kcal, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0 }));
+      }
     }
     return out;
   }

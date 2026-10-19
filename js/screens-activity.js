@@ -405,8 +405,10 @@
     }
     const others = plan.workouts.filter((w) => !f.session || w.name !== f.session.name);
     if (others.length) {
-      body.appendChild(h('div', { class: 'ct' }, f.session ? 'Or do a different session instead' : 'Train anyway'));
+      body.appendChild(h('div', { class: 'ct' }, f.session ? 'Or do a different session' : 'Train anyway'));
+      body.appendChild(h('div', { class: 'muted small' }, 'Tap a session to do it today instead of ' + (f.session ? f.session.name : 'resting') + '; the rest of the week shuffles around it. Or choose Add as well: it goes on top of today and nothing else moves or is cleared.'));
       const list = h('div', { class: 'list' }), week = E.weekOf(plan.startDate, date), idx = E.setIndex(st);
+      const added = new Set(((st.extras && st.extras[date]) || []));
       for (const w of others) {
         const r = E.changeSession(st, date, w.name, t);
         const entry = wp.find((p) => p.name === w.name && p.date !== date);
@@ -417,6 +419,8 @@
         if (r.moved) parts.push(r.moved.name + ' moves to ' + dayLabel(r.moved.date) + '.');
         if (r.dropped) parts.push(r.dropped + ' comes off this week.');
         list.appendChild(row(w.name, parts.join(' '), () => apply(r.events, w.name + ' is today\'s session' + (r.moved ? ', and ' + r.moved.name + ' is on ' + dayLabel(r.moved.date) : '') + '.')));
+        if (!added.has(w.name)) list.appendChild(h('button', { type: 'button', class: 'listrow addon', onclick: async () => { close(); await Store.append('session_added', { date, session: w.name }, 'user'); U.toast(w.name + ' added to ' + (date === t ? 'today' : dayLabel(date)) + '. Nothing else moved.'); root.App.render(); } },
+          h('div', { class: 'grow' }, h('b', null, 'Add ' + w.name + ' as well'), h('span', { class: 'muted small' }, 'On top of ' + (f.session ? f.session.name : 'today') + '. Nothing moves, nothing is cleared.')), U.icon('plus', 16)));
       }
       body.appendChild(list);
     }

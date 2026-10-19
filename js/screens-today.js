@@ -319,11 +319,11 @@
     const f = E.sessionFor(plan, st.moves, t);
     const wo = f.session;
     const todaySets = st.sets.filter((x) => x.date === t);
-    if (wo) {
+    const usedIds = new Set(); // every exercise any of today's sessions lists, so what is left over shows as an extra
+    const buildList = (sess) => {
       const list = h('div', null);
       let doneEx = 0;
-      const usedIds = new Set();
-      for (const ex of wo.ex) {
+      for (const ex of sess.ex) {
         const lift = ex.lift ? plan.lifts[ex.lift] : null;
         const origId = lift ? lift.id : 'acc_' + slug(ex.n);
         usedIds.add(origId);
@@ -369,6 +369,12 @@
           ex.flag ? h('div', { class: 'flag' }, ex.flag) : null,
           setChips(mine, opts, set.liftUnit)));
       }
+      return { list, doneEx };
+    };
+    const mainBuilt = wo ? buildList(wo) : null;
+    const addedBuilt = E.extrasFor(st, t).map((x) => ({ sess: x, built: buildList(x) }));
+    if (wo) {
+      const { list, doneEx } = mainBuilt;
       // Extra exercises logged today beyond the planned list (e.g. an accessory the person felt like adding).
       const extraIds = Array.from(new Set(todaySets.filter((x) => !usedIds.has(x.lift)).map((x) => x.lift)));
       const extraList = extraIds.length ? h('div', null, ...extraIds.map((id) => {
@@ -392,7 +398,7 @@
         h('button', { class: 'linkbtn', type: 'button', onclick: () => Screens.upcomingSheet(t) }, 'See what\'s coming up')));
     } else {
       const nextIdx = [1, 2, 3, 4, 5, 6, 7].map((d) => E.sessionFor(plan, st.moves, E.addDays(t, d))).map((x) => x.session).find(Boolean);
-      const restIds = Array.from(new Set(todaySets.map((x) => x.lift)));
+      const restIds = Array.from(new Set(todaySets.filter((x) => !usedIds.has(x.lift)).map((x) => x.lift)));
       const restList = restIds.length ? h('div', null, ...restIds.map((id) => {
         const mine = todaySets.filter((x) => x.lift === id);
         const lift = plan.lifts[id];
@@ -405,6 +411,14 @@
         UI.row(UI.btn('Train anyway', { kind: 'quiet', onClick: () => Screens.rescheduleSheet(t) }), UI.btn('Lifts', { kind: 'quiet', href: '#/lifts' })),
         h('button', { class: 'linkbtn', type: 'button', onclick: () => addExtraSheet(t, new Set()) }, '+ Log an exercise anyway'),
         h('button', { class: 'linkbtn', type: 'button', onclick: () => Screens.upcomingSheet(t) }, nextIdx ? 'Next up: ' + nextIdx.name + '. See what\'s coming up' : 'See what\'s coming up')));
+    }
+    // Sessions added on top of the day (from Change): each is its own card; nothing else in the week moved for them.
+    for (const x of addedBuilt) {
+      const seq = st.extraSeqs[t + '|' + x.sess.name];
+      cards.push(UI.card(
+        h('div', { class: 'todayhead' }, h('div', { class: 'grow' }, h('div', { class: 'ct' }, x.sess.name + ' day'), h('div', { class: 'muted small' }, x.built.doneEx + ' of ' + x.sess.ex.length + ' exercises done · added on top of ' + (wo ? wo.name : 'today'))),
+          seq ? h('button', { class: 'btn quiet small', type: 'button', 'aria-label': 'Take ' + x.sess.name + ' off today', onclick: () => { Store.voidEvent(seq).then(() => root.App.render()); } }, 'Remove') : null),
+        x.built.list));
     }
     const gc = Screens.goalsTodayCard ? Screens.goalsTodayCard() : null;
     if (gc) cards.push(gc);

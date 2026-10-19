@@ -227,3 +227,24 @@ test('the bundled data holds no rows from the IFCT tables', () => {
   assert.ok(!/IFCT|Indian Food Composition|National Institute of Nutrition/i.test(JSON.stringify(raw.sources)));
   assert.ok(raw.foods.every((f) => f[7] === 0));
 });
+
+test('recents: a food logged by weight comes back per 100 g, so amounts never pile up on the last one', () => {
+  const base = { kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 };
+  const foods = [
+    { seq: 1, name: 'Sona masoori rice', kcal: 130, protein: 2.7, carbs: 28, fat: 0.3, meal: 'Lunch', serving: '100 g', source: 'usda', portion: { unit: 'g', amount: 100, base } },
+    { seq: 2, name: 'Sona masoori rice', kcal: 163, protein: 3.4, carbs: 35, fat: 0.4, meal: 'Dinner', serving: '125 g', source: 'usda', portion: { unit: 'g', amount: 125, base } },
+  ];
+  const [r] = Foods.recents(foods, 3);
+  assert.equal(r.per100, true);
+  assert.equal(r.kcal, 130, 'the numbers are per 100 g, not those of the 125 g meal');
+  assert.deepEqual(Foods.scale(r, 160), { kcal: 208, protein: 4.3, carbs: 44.8, fat: 0.5 }, '160 g is a plain 160 g');
+  // an older entry with no stored basis but a weight in its label is worked back to per 100 g
+  const old = Foods.recents([{ seq: 3, name: 'Curd', kcal: 150, protein: 8, carbs: 12, fat: 8, serving: '250 g' }], 2)[0];
+  assert.equal(old.per100, true); assert.equal(old.kcal, 60); assert.equal(old.protein, 3.2);
+  // one logged as servings returns as one serving at its basis
+  const x = Foods.recents([{ seq: 4, name: 'Veg curry', kcal: 450, protein: 12, carbs: 50, fat: 20, serving: '1.5 x 1 bowl', portion: { unit: 'x', amount: 1.5, label: '1 bowl', base: { kcal: 300, protein: 8, carbs: 33.3, fat: 13.3 } } }], 2)[0];
+  assert.equal(x.kcal, 300); assert.equal(x.serving, '1 bowl'); assert.ok(!x.per100);
+  // hostile stored portions are ignored
+  const bad = Foods.recents([{ seq: 5, name: 'Odd', kcal: 100, protein: 1, carbs: 1, fat: 1, serving: 'x', portion: { unit: 'g', base: { kcal: 'NaN', protein: -1, carbs: 1, fat: 1 } } }], 2)[0];
+  assert.equal(bad.kcal, 100); assert.ok(!bad.per100);
+});

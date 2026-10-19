@@ -25,6 +25,46 @@
     return Store.append('food_logged', data);
   }
 
+  // ---------- one standard portion per food ----------
+  // Set once, here, and every later log of that food starts from it: the person types grams, never a multiplier.
+  // A food with numbers per 100 g has its own standard (default 100 g). One counted in servings can be given "1 serving = N g"
+  // so it too is logged in grams. The two kinds are kept apart, so an AI-estimated "Rice" bowl never takes the gram standard of database rice.
+  const stdKey = (name, per100) => E.portionKey(name).slice(0, 60) + (per100 ? '' : '|serving');
+  const stdFor = (name, per100) => { const v = Store.getState().portions[stdKey(name, per100)]; return v > 0 ? v : null; };
+  function stdSheet(name, per100, current, onSaved) {
+    const f = UI.field({ label: per100 ? 'Standard portion' : 'One serving weighs', unit: 'g', type: 'number', inputmode: 'decimal', value: current ? String(current) : (per100 ? '100' : ''), hint: per100 ? 'What you usually eat of ' + name + '. Logging starts from this; you only type the grams you actually had.' : 'Weigh a serving once. After that you log ' + name + ' in grams like any other food.' });
+    U.sheet(per100 ? 'Standard portion' : 'Set the serving size', h('div', { class: 'stack' }, h('div', { class: 'ct' }, name), f), [
+      { label: 'Cancel' },
+      current ? { label: 'Clear', run: async () => { await Store.append('food_portion_set', { key: stdKey(name, per100), g: null }, 'user'); U.toast('Standard portion cleared.'); onSaved(null); } } : null,
+      { label: 'Save', kind: 'primary', run: () => {
+        const g = numOrNull(f.input.value);
+        const chk = E.cleanStdPortion({ key: stdKey(name, per100), g });
+        if (!chk.ok) { U.toast(chk.errors[0], 'warn'); return false; }
+        Store.append('food_portion_set', { key: chk.value.key, g: chk.value.g }, 'user').then(() => { U.toast('Standard portion saved.'); onSaved(chk.value.g); });
+      } },
+    ].filter(Boolean));
+  }
+
+  // ---------- what an AI-estimated food is made of ----------
+  // The ingredients the estimate was built from, with their calories and macros. `k` scales them to the portion being shown;
+  // the amounts in words ("1 cup") stay as first estimated. Anything read from the log is shown as plain text, never as markup.
+  const cleanItems = (ai) => (ai && Array.isArray(ai.items) ? ai.items.filter((it) => it && typeof it === 'object' && it.name).slice(0, 25) : []);
+  const num1 = (x) => Math.round((Number(x) || 0) * 10) / 10;
+  function ingredientRows(items, k) {
+    const m = Number.isFinite(k) && k > 0 ? k : 1;
+    return items.map((it) => {
+      const sc = { protein: num1(it.protein * m), carbs: num1(it.carbs * m), fat: num1(it.fat * m) };
+      return h('div', { class: 'itemrow' }, h('span', null, String(it.name).slice(0, 60)), h('b', null, Math.round((Number(it.kcal) || 0) * m) + ' kcal'), h('small', null, (it.qty ? String(it.qty).slice(0, 40) + ' · ' : '') + macroLine(sc)));
+    });
+  }
+  // One short line for the list: "Chicken breast 150 g · Mixed greens 1 bowl · +2 more".
+  function ingredientLine(ai) {
+    const items = cleanItems(ai);
+    if (!items.length) return '';
+    const parts = items.slice(0, 3).map((it) => String(it.name).slice(0, 30) + (it.qty ? ' ' + String(it.qty).slice(0, 20) : ''));
+    return parts.join(' · ') + (items.length > 3 ? ' · +' + (items.length - 3) + ' more' : '');
+  }
+
   // ---------- the person's own food list ----------
   // Kept in this browser only (meta store), never in backups and never in the repository. See Foods.parseImport for the file format.
   let userLoaded = null;
@@ -92,7 +132,7 @@
       sections.push(UI.card(
         h('div', { class: 'mealhead' }, h('div', { class: 'ct' }, meal), h('span', { class: 'muted small' }, U.withCommas(sub) + ' kcal')),
         ...items.map((f) => h('button', { type: 'button', class: 'listrow foodrow', 'aria-label': 'Edit ' + f.name, onclick: () => editSheet(f) },
-          h('div', { class: 'fn' }, h('b', null, f.name), h('span', { class: 'muted small' }, macroLine(f) + (f.serving ? ' · ' + f.serving : ''))),
+          h('div', { class: 'fn' }, h('b', null, f.name), h('span', { class: 'muted small' }, macroLine(f) + (f.serving ? ' · ' + f.serving : '')), f.ai && ingredientLine(f.ai) ? h('span', { class: 'muted small ings' }, 'Made of: ' + ingredientLine(f.ai)) : null),
           f.ai ? U.chip(f.ai.edited ? 'AI, edited' : 'AI est.', 'acc') : null,
           h('div', { class: 'kc' }, String(f.kcal))))));
     }
@@ -117,22 +157,29 @@
   function editSheet(f) {
     const name = UI.field({ label: 'Name', value: f.name, maxlength: 80 });
     const portion = portionOf(f);
-    const isGrams = portion.unit === 'g';
-    let amount = String(portion.amount);
+    // A serving-counted food whose serving was given a weight is edited in grams too.
+    const stdG = portion.unit === 'x' ? stdFor(f.name, false) : null;
+    const isGrams = portion.unit === 'g' || !!stdG;
+    const asBasis = (n) => (stdG ? scalePortion(portion.base, 'x', n / stdG) : scalePortion(portion.base, portion.unit, n));
+    let amount = String(stdG ? Math.round(portion.amount * stdG * 10) / 10 : portion.amount);
     let meal = E.MEALS.includes(f.meal) ? f.meal : 'Snack';
     const live = h('div', { class: 'kv' });
-    const updLive = () => { const n = Math.max(0, numOrNull(amount) || 0); const m = scalePortion(portion.base, portion.unit, n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); };
+    const updLive = () => { const n = Math.max(0, numOrNull(amount) || 0); const m = asBasis(n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); drawItems(); };
     const amtField = UI.field({ label: isGrams ? 'Amount' : 'Portion (x ' + portion.label + ')', unit: isGrams ? 'g' : 'x', type: 'number', value: amount, flex: 1, onInput: (v) => { amount = v; updLive(); } });
     const quick = isGrams
-      ? h('div', { class: 'pills' }, ...[50, 100, 150, 200, 250].map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(g); amtField.input.value = amount; updLive(); } }, g + ' g')))
+      ? h('div', { class: 'pills' }, ...Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round((stdG || stdFor(f.name, true) || 100) * m * 10) / 10))).map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(g); amtField.input.value = amount; updLive(); } }, g + ' g')))
       : h('div', { class: 'pills' }, ...[0.5, 1, 1.5, 2].map((x) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(x); amtField.input.value = amount; updLive(); } }, x + 'x')));
+    const aiList = cleanItems(f.ai);
+    const aiBox = h('div', { class: 'stack' });
+    const drawItems = () => {
+      if (!aiList.length) return;
+      const n = Math.max(0, numOrNull(amount) || 0), k = stdG ? n / stdG : isGrams ? 1 : n;
+      U.clear(aiBox);
+      U.put(aiBox, h('div', { class: 'lab' }, 'How it was worked out'), h('div', null, ...ingredientRows(aiList, k)),
+        h('div', { class: 'muted small' }, k === 1 ? 'From the original estimate.' : 'Calories and macros follow your portion. The amounts in words are from the original estimate.'));
+    };
+    const aiItems = aiList.length ? aiBox : null;
     updLive();
-    const aiItems = f.ai && f.ai.items && f.ai.items.length
-      ? h('div', { class: 'stack' },
-          h('div', { class: 'lab' }, 'How it was worked out'),
-          h('div', null, ...f.ai.items.map((it) => h('div', { class: 'itemrow' }, h('span', null, it.name), h('b', null, it.kcal + ' kcal'), h('small', null, (it.qty ? it.qty + ' · ' : '') + macroLine(it))))),
-          h('div', { class: 'muted small' }, 'From the original estimate. It does not rescale if you change the portion above.'))
-      : null;
     const body = h('div', { class: 'stack' }, name, amtField, quick, live,
       h('div', { class: 'muted small' }, isGrams ? 'Weigh the amount you actually had; calories and macros scale from it.' : 'Ate more or less than logged? Adjust the portion; calories and macros scale from it.'),
       UI.pills({ label: 'Meal', items: E.MEALS, values: new Set([meal]), multi: false, onChange: (v) => { meal = Array.from(v)[0]; } }),
@@ -140,16 +187,16 @@
       f.ai && f.ai.assumptions && f.ai.assumptions.length ? h('ul', { class: 'assume' }, ...f.ai.assumptions.map((a) => h('li', null, a))) : null);
     U.sheet('Edit food', body, [{ label: 'Delete', kind: 'danger', run: async () => { await Store.voidEvent(f.seq); root.App.render(); } }, { label: 'Save', kind: 'primary', run: () => {
       const amt = numOrNull(amount);
-      const max = isGrams ? 3000 : 20;
+      const max = stdG ? 20 * stdG : isGrams ? 3000 : 20;
       if (!(amt > 0 && amt <= max)) { U.toast(isGrams ? 'Enter an amount between 1 and 3,000 g.' : 'Portion must be between 0 and 20.', 'warn'); return false; }
-      const m = scalePortion(portion.base, portion.unit, amt);
+      const m = asBasis(amt);
       const n = E.normalizeFood({ name: name.input.value, kcal: m.kcal, protein: m.protein, carbs: m.carbs, fat: m.fat });
       if (!n.ok) { U.toast(n.errors[0], 'warn'); return false; }
       const extra = {};
       extra.serving = isGrams ? (Math.round(amt * 10) / 10 + ' g') : (amt === 1 ? portion.label : U.num(amt, 2) + ' x ' + portion.label);
       if (f.source) extra.source = f.source;
       if (f.ai) extra.ai = Object.assign({}, f.ai, { edited: true });
-      extra.portion = { unit: portion.unit, amount: amt, label: portion.label, base: portion.base };
+      extra.portion = { unit: portion.unit, amount: stdG ? amt / stdG : amt, label: portion.label, base: portion.base };
       (async () => { await Store.voidEvent(f.seq); await saveFood(f.date, meal, n.value, extra); root.App.render(); })();
     } }]);
   }
@@ -232,32 +279,51 @@
     function drawPick() {
       const f = pick;
       if (f.per100) return drawPickGrams(f);
-      const sv = UI.field({ label: 'Servings of ' + f.serving, type: 'number', value: '1', flex: 1 });
+      // Counted in servings. Once the person says what one serving weighs, it is logged in grams like any other food.
+      const std = stdFor(f.name, false);
+      const sv = UI.field({ label: std ? 'Amount' : 'Servings of ' + f.serving, unit: std ? 'g' : '', type: 'number', value: std ? String(std) : '1', flex: 1 });
       const live = h('div', { class: 'kv' });
-      const upd = () => { const n = Math.max(0, numOrNull(sv.input.value) || 0); U.clear(live); U.put(live, h('span', null, U.num(n * f.kcal, 0) + ' kcal'), h('b', null, macroLine({ protein: n * f.protein, carbs: n * f.carbs, fat: n * f.fat }))); };
+      const servings = () => { const n = Math.max(0, numOrNull(sv.input.value) || 0); return std ? n / std : n; };
+      const aiList = cleanItems(f.ai), aiBox = h('div', { class: 'stack' });
+      const drawIngr = () => { if (!aiList.length) return; U.clear(aiBox); U.put(aiBox, h('div', { class: 'lab' }, 'Made of'), h('div', null, ...ingredientRows(aiList, servings())), h('div', { class: 'muted small' }, 'From the AI estimate this was logged with. Calories and macros follow the amount you enter.')); };
+      const upd = () => { const n = servings(); U.clear(live); U.put(live, h('span', null, U.num(n * f.kcal, 0) + ' kcal'), h('b', null, macroLine({ protein: n * f.protein, carbs: n * f.carbs, fat: n * f.fat }))); drawIngr(); };
       sv.input.addEventListener('input', upd); upd();
-      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'muted small' }, 'Values are typical and approximate. If yours is different, use Manual.'), sv, live,
+      const quick = std ? h('div', { class: 'pills' }, ...Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round(std * m * 10) / 10))).map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { sv.input.value = String(g); upd(); } }, g + ' g' + (g === std ? ' · standard' : '')))) : null;
+      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'muted small' }, f.recent ? 'As you first logged it' + (std ? ': one serving of ' + f.serving + ' is ' + std + ' g.' : ': ' + f.serving + '.') : 'Values are typical and approximate. If yours is different, use Manual.'), sv, quick, live, aiList.length ? aiBox : null,
+        h('button', { type: 'button', class: 'linkbtn', onclick: () => stdSheet(f.name, false, std, () => draw()) }, std ? 'Change what one serving weighs' : 'Log this in grams: set what one serving weighs'),
         h('div', { class: 'row' }, UI.btn('Back', { kind: 'quiet', onClick: () => { pick = null; draw(); } }), UI.btn('Log it', { onClick: async () => {
-          const n = numOrNull(sv.input.value);
-          if (!(n > 0 && n <= 20)) return U.toast('Servings must be between 0 and 20.', 'warn');
+          const raw = numOrNull(sv.input.value), n = std ? raw / std : raw;
+          if (!(raw > 0) || !(n > 0 && n <= 20)) return U.toast(std ? 'Enter an amount in grams that is up to 20 servings.' : 'Servings must be between 0 and 20.', 'warn');
           const r = E.normalizeFood({ name: f.name, kcal: f.kcal * n, protein: f.protein * n, carbs: f.carbs * n, fat: f.fat * n });
           if (!r.ok) return U.toast(r.errors[0], 'warn');
-          await saveFood(date, meal, r.value, Object.assign({ serving: n === 1 ? f.serving : U.num(n, 2) + ' x ' + f.serving, source: f.recent ? 'recent' : 'catalog', portion: { unit: 'x', amount: n, label: f.serving, base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } } }, f.ai ? { ai: f.ai } : {}));
+          await saveFood(date, meal, r.value, Object.assign({ serving: std ? Math.round(raw * 10) / 10 + ' g' : n === 1 ? f.serving : U.num(n, 2) + ' x ' + f.serving, source: f.recent ? 'recent' : 'catalog', portion: { unit: 'x', amount: n, label: f.serving, base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } } }, f.ai ? { ai: f.ai } : {}));
           finish();
         } })));
     }
-    // A database food: the amount is in grams, since the numbers are per 100 g.
+    // A food with numbers per 100 g: the amount is in grams. It starts at the food's standard portion, set once.
     function drawPickGrams(f) {
-      let grams = '100';
+      const std = stdFor(f.name, true), start = std || 100;
+      let grams = String(start);
       const live = h('div', { class: 'kv' });
-      const upd = () => { const n = Math.max(0, numOrNull(grams) || 0); const m = Foods.scale(f, n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); };
-      const gf = UI.field({ label: 'Amount', unit: 'g', type: 'number', value: '100', onInput: (v) => { grams = v; upd(); } });
-      const quick = h('div', { class: 'pills' }, ...[50, 100, 150, 200, 250].map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { grams = String(g); gf.input.value = grams; upd(); } }, g + ' g')));
+      const upd = () => { const n = Math.max(0, numOrNull(grams) || 0); const m = Foods.scale(f, n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); makeStd(); };
+      const gf = UI.field({ label: 'Amount', unit: 'g', type: 'number', value: grams, onInput: (v) => { grams = v; upd(); } });
+      const setGrams = (g) => { grams = String(g); gf.input.value = grams; upd(); };
+      const quick = h('div', { class: 'pills' }, ...Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round(start * m * 10) / 10))).map((g) => h('button', { type: 'button', class: 'pill', onclick: () => setGrams(g) }, g + ' g' + (g === start ? (std ? ' · standard' : '') : ''))));
+      const stdRow = h('div', { class: 'kv' }, h('span', null, 'Standard portion'), h('b', null, std ? std + ' g' : 'not set (100 g)'));
+      const makeBox = h('div', { class: 'hidden' });
+      const makeStd = () => {
+        const n = numOrNull(grams);
+        const differs = n > 0 && n <= 3000 && n !== start;
+        makeBox.classList.toggle('hidden', !differs);
+        U.clear(makeBox);
+        if (differs) U.put(makeBox, h('button', { type: 'button', class: 'linkbtn', onclick: () => Store.append('food_portion_set', { key: stdKey(f.name, true), g: n }, 'user').then(() => { U.toast('Standard portion is now ' + n + ' g.'); draw(); }) }, 'Make ' + n + ' g my standard portion'));
+      };
       upd();
       const notes = [];
       if (f.diet === 3) notes.push('The ingredients of this food are not clear, so check the label if you avoid meat or egg.');
       if (f.src === 1) notes.push('From your own list. Check that the amount matches how it was measured (raw or cooked).');
-      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'row' }, dietChip(f), U.chip(srcNote(f), 'line')), h('div', { class: 'muted small' }, 'Numbers are per 100 g. Weigh cooked food against a cooked entry and raw against a raw one.'), ...notes.map((n) => h('div', { class: 'muted small' }, n)), gf, quick, live,
+      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'row' }, dietChip(f), U.chip(srcNote(f), 'line')), h('div', { class: 'muted small' }, 'Numbers are per 100 g. Weigh cooked food against a cooked entry and raw against a raw one.'), ...notes.map((n) => h('div', { class: 'muted small' }, n)), gf, quick, stdRow,
+        h('button', { type: 'button', class: 'linkbtn', onclick: () => stdSheet(f.name, true, std, () => draw()) }, std ? 'Change the standard portion' : 'Set a standard portion'), makeBox, live,
         h('div', { class: 'row' }, UI.btn('Back', { kind: 'quiet', onClick: () => { pick = null; draw(); } }), UI.btn('Log it', { onClick: async () => {
           const n = numOrNull(grams);
           if (!(n > 0 && n <= 3000)) return U.toast('Enter an amount between 1 and 3,000 g.', 'warn');
