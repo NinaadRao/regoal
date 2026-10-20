@@ -248,3 +248,27 @@ test('recents: a food logged by weight comes back per 100 g, so amounts never pi
   const bad = Foods.recents([{ seq: 5, name: 'Odd', kcal: 100, protein: 1, carbs: 1, fat: 1, serving: 'x', portion: { unit: 'g', base: { kcal: 'NaN', protein: -1, carbs: 1, fat: 1 } } }], 2)[0];
   assert.equal(bad.kcal, 100); assert.ok(!bad.per100);
 });
+
+test('entries from the old stacking bug are untangled: one plain serving, real numbers', () => {
+  // Dal, cooked is 1 katori = 150 kcal. Each reuse used to multiply the last one, and the label piled up.
+  const t = Foods.tidyLabel('2 x 0.5 x 1.5 x 0.75 x 1 katori (150 g)');
+  assert.equal(t.label, '1 katori (150 g)'); assert.equal(t.mult, 1.125);
+  assert.deepEqual(Foods.tidyLabel('1 katori (150 g)'), { label: '1 katori (150 g)', mult: 1 });
+  assert.deepEqual(Foods.tidyLabel('125 g'), { label: '125 g', mult: 1 });
+  assert.deepEqual(Foods.tidyLabel('3 idlis'), { label: '3 idlis', mult: 1 }, 'a count that is part of the name is not a multiplier');
+  const foods = [{ seq: 9, name: 'Dal, cooked', kcal: 170, protein: 9, carbs: 25, fat: 3.4, meal: 'Lunch', serving: '2 x 0.5 x 1.5 x 0.75 x 1 katori (150 g)', source: 'recent',
+    portion: { unit: 'x', amount: 1.125, label: '0.5 x 1.5 x 0.75 x 1 katori (150 g)', base: { kcal: 151, protein: 8, carbs: 22.2, fat: 3 } } }];
+  const [r] = Foods.recents(foods, 3);
+  assert.equal(r.serving, '1 katori (150 g)');
+  assert.deepEqual([r.kcal, r.protein, r.carbs, r.fat], [150, 8, 22, 3], 'back to the catalog numbers');
+  // the stored portion of that entry, for editing, is one plain serving that reproduces what was logged
+  const c = Foods.cleanPortion(foods[0].portion);
+  assert.equal(c.label, '1 katori (150 g)');
+  assert.ok(Math.abs(c.base.kcal * c.amount - 170) < 3, 'same calories as logged: ' + c.base.kcal * c.amount);
+  // a legacy entry without a stored basis gets the same treatment
+  const [l] = Foods.recents([{ seq: 1, name: 'My sabzi', kcal: 450, protein: 9, carbs: 45, fat: 18, serving: '3 x 1.5 x 1 bowl' }], 2);
+  assert.equal(l.serving, '1 bowl'); assert.equal(l.kcal, 100);
+  // a clean entry is left alone
+  const ok = Foods.cleanPortion({ unit: 'x', amount: 2, label: '1 bowl', base: { kcal: 200, protein: 5, carbs: 20, fat: 8 } });
+  assert.equal(ok.amount, 2); assert.equal(ok.base.kcal, 200);
+});

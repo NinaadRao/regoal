@@ -45,6 +45,12 @@
     ].filter(Boolean));
   }
 
+  // "2 x 0.5 x 1.5 x 0.75 x 1 katori (150 g)" (stacked multipliers from an older version) reads as "1.13 x 1 katori (150 g)".
+  function servingText(serving) {
+    const t = Foods.tidyLabel(serving);
+    return t.mult === 1 ? String(serving) : U.num(t.mult, 2) + ' x ' + t.label;
+  }
+
   // ---------- what an AI-estimated food is made of ----------
   // The ingredients the estimate was built from, with their calories and macros. `k` scales them to the portion being shown;
   // the amounts in words ("1 cup") stay as first estimated. Anything read from the log is shown as plain text, never as markup.
@@ -132,7 +138,7 @@
       sections.push(UI.card(
         h('div', { class: 'mealhead' }, h('div', { class: 'ct' }, meal), h('span', { class: 'muted small' }, U.withCommas(sub) + ' kcal')),
         ...items.map((f) => h('button', { type: 'button', class: 'listrow foodrow', 'aria-label': 'Edit ' + f.name, onclick: () => editSheet(f) },
-          h('div', { class: 'fn' }, h('b', null, f.name), h('span', { class: 'muted small' }, macroLine(f) + (f.serving ? ' · ' + f.serving : '')), f.ai && ingredientLine(f.ai) ? h('span', { class: 'muted small ings' }, 'Made of: ' + ingredientLine(f.ai)) : null),
+          h('div', { class: 'fn' }, h('b', null, f.name), h('span', { class: 'muted small' }, macroLine(f) + (f.serving ? ' · ' + servingText(f.serving) : '')), f.ai && ingredientLine(f.ai) ? h('span', { class: 'muted small ings' }, 'Made of: ' + ingredientLine(f.ai)) : null),
           f.ai ? U.chip(f.ai.edited ? 'AI, edited' : 'AI est.', 'acc') : null,
           h('div', { class: 'kc' }, String(f.kcal))))));
     }
@@ -147,9 +153,9 @@
   // Once something is logged, editing it changes the portion size instead, and macros scale from the
   // per-unit basis that was captured at log time (grams for a database food, "x servings" otherwise).
   function portionOf(f) {
-    if (f.portion && f.portion.base) return f.portion;
+    if (f.portion && f.portion.base) return Foods.cleanPortion(f.portion);
     // Entries logged before this feature existed have no stored basis: treat what was logged as "1x".
-    return { unit: 'x', amount: 1, label: f.serving || 'as logged', base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } };
+    return Foods.cleanPortion({ unit: 'x', amount: 1, label: f.serving || 'as logged', base: { kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat } });
   }
   function scalePortion(base, unit, amount) {
     return unit === 'g' ? Foods.scale(base, amount) : { kcal: Math.round(base.kcal * amount), protein: Math.round(base.protein * amount * 10) / 10, carbs: Math.round(base.carbs * amount * 10) / 10, fat: Math.round(base.fat * amount * 10) / 10 };

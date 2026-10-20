@@ -228,6 +228,25 @@
   // A reused food always comes back at its BASIS, never at the last amount that was eaten: a food logged by weight is a
   // per-100 g food again (type the grams), and anything else is one serving as first logged. Otherwise every reuse would
   // start from the previous change (100 g, then 1.25x, then 160 g as 1.28x of that) and the multipliers would pile up.
+  // Older versions stacked every reuse onto the last one, so a serving label could read "2 x 0.5 x 1.5 x 0.75 x 1 katori (150 g)"
+  // and its numbers had been multiplied along the way. tidyLabel splits such a label into the real one and the product of the
+  // multipliers; cleanPortion and recents use it to get back to one plain serving.
+  const CHAIN = /^((?:\d+(?:\.\d+)?\s*x\s*)+)(.*)$/;
+  function tidyLabel(label) {
+    const text = String(label == null ? '' : label).trim(), m = CHAIN.exec(text);
+    if (!m || !m[2].trim()) return { label: text, mult: 1 };
+    const mult = m[1].match(/\d+(?:\.\d+)?/g).reduce((a, b) => a * Number(b), 1);
+    return { label: m[2].trim().slice(0, 60), mult: mult > 0 && mult <= 1000 ? mult : 1 };
+  }
+  // A stored serving portion at its true basis: the label without the chain, the base divided by what the chain multiplied in,
+  // and the amount carrying that factor, so the entry's own calories come out the same.
+  function cleanPortion(p) {
+    if (!p || p.unit !== 'x' || !p.base) return p;
+    const t = tidyLabel(p.label);
+    if (t.mult === 1) return p;
+    const b = p.base, d = (x) => Math.round(((Number(x) || 0) / t.mult) * 10) / 10;
+    return { unit: 'x', amount: Math.round((Number(p.amount) || 1) * t.mult * 100) / 100, label: t.label, base: { kcal: Math.round((Number(b.kcal) || 0) / t.mult), protein: d(b.protein), carbs: d(b.carbs), fat: d(b.fat) } };
+  }
   const fin = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x < 1e5;
   function recents(foods, limit) {
     const seen = new Set(), out = [];
@@ -240,7 +259,11 @@
       const ok = b && typeof b === 'object' && fin(b.kcal) && fin(b.protein) && fin(b.carbs) && fin(b.fat) && (p.unit === 'g' || p.unit === 'x');
       const common = { id: 'r' + f.seq, name: f.name, recent: true, meal: f.meal, diet: 0, ai: f.ai || null };
       if (ok && p.unit === 'g') out.push(Object.assign(common, { serving: '100 g', kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat, per100: true, src: f.source === 'mylist' ? 1 : 0 }));
-      else if (ok) out.push(Object.assign(common, { serving: String(p.label || f.serving || 'as logged').slice(0, 60), kcal: b.kcal, protein: b.protein, carbs: b.carbs, fat: b.fat }));
+      else if (ok) {
+        const c = cleanPortion(p), label = String(c.label || f.serving || 'as logged').slice(0, 60);
+        const cat = CATALOG.find((x) => x.name === f.name && x.serving === label); // an everyday food: its own numbers, free of rounding
+        out.push(Object.assign(common, { serving: label }, cat ? { kcal: cat.kcal, protein: cat.protein, carbs: cat.carbs, fat: cat.fat } : { kcal: c.base.kcal, protein: c.base.protein, carbs: c.base.carbs, fat: c.base.fat }));
+      }
       else {
         // Older entries have no stored basis, but one logged as "125 g" still tells us its grams.
         const g = /^(\d+(?:\.\d+)?) g$/.exec(String(f.serving || ''));
@@ -248,7 +271,11 @@
         if (grams >= 1 && grams <= 3000) {
           const per = (x) => Math.round(((Number(x) || 0) * 100 / grams) * 10) / 10;
           out.push(Object.assign(common, { serving: '100 g', kcal: Math.round((Number(f.kcal) || 0) * 100 / grams), protein: per(f.protein), carbs: per(f.carbs), fat: per(f.fat), per100: true, src: f.source === 'mylist' ? 1 : 0 }));
-        } else out.push(Object.assign(common, { serving: f.serving || 'as logged', kcal: f.kcal, protein: f.protein || 0, carbs: f.carbs || 0, fat: f.fat || 0 }));
+        } else {
+          const t = tidyLabel(f.serving), cat = CATALOG.find((x) => x.name === f.name && x.serving === t.label);
+          const d = (x) => Math.round(((Number(x) || 0) / t.mult) * 10) / 10;
+          out.push(Object.assign(common, { serving: t.label || 'as logged' }, cat ? { kcal: cat.kcal, protein: cat.protein, carbs: cat.carbs, fat: cat.fat } : { kcal: Math.round((Number(f.kcal) || 0) / t.mult), protein: d(f.protein), carbs: d(f.carbs), fat: d(f.fat) }));
+        }
       }
     }
     return out;
@@ -258,7 +285,7 @@
     return recents(foods, 200).filter((f) => t.every((w) => f.name.toLowerCase().includes(w))).slice(0, limit || 5);
   }
 
-  const api = { CATALOG, search, recents, searchRecents, load, ready, count, parseDb, useDb, parseImport, useUser, userCount, userName, IMPORT_MAX_BYTES, scale, dietOk, dietFor, DIETS, DIET_LABEL, DIET_TONE, SOURCE_LABEL };
+  const api = { CATALOG, tidyLabel, cleanPortion, search, recents, searchRecents, load, ready, count, parseDb, useDb, parseImport, useUser, userCount, userName, IMPORT_MAX_BYTES, scale, dietOk, dietFor, DIETS, DIET_LABEL, DIET_TONE, SOURCE_LABEL };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Foods = api;
 })(typeof self !== 'undefined' ? self : this);

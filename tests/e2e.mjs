@@ -463,6 +463,21 @@ async function main() {
     eq(await page.evaluate(() => Store.getState().portions['veg curry bowl']), undefined);
   });
 
+  await step('Fuel: an entry left tangled by the old stacking multipliers is shown and reused as one plain serving', async () => {
+    const seq = await page.evaluate(async () => (await Store.append('food_logged', { date: Engine.isoDate(new Date()), meal: 'Lunch', name: 'Dal, cooked', kcal: 170, protein: 9, carbs: 25, fat: 3.4, serving: '2 x 0.5 x 1.5 x 0.75 x 1 katori (150 g)', source: 'recent', portion: { unit: 'x', amount: 1.125, label: '0.5 x 1.5 x 0.75 x 1 katori (150 g)', base: { kcal: 151, protein: 8, carbs: 22.2, fat: 3 } } })).seq);
+    await route(page, '#/today'); await route(page, '#/fuel');
+    const row = await page.locator('.foodrow', { hasText: 'Dal, cooked' }).first().innerText();
+    ok(/1\.13 x 1 katori \(150 g\)/.test(row) && !/0\.5 x 1\.5/.test(row), 'the list shows one multiplier: ' + row.replace(/\n/g, ' '));
+    await page.getByRole('button', { name: 'Add food' }).click();
+    await page.getByLabel('Search foods').fill('dal cooked');
+    await page.locator('.result', { hasText: 'from your log' }).first().click();
+    const sheet = page.locator('#sheets').last();
+    ok(await sheet.getByText('Servings of 1 katori (150 g)', { exact: true }).count() === 1, 'the label is the plain serving');
+    await sheet.getByText('150 kcal', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Dismiss this window' }).last().click();
+    await page.evaluate((q) => Store.voidEvent(q), seq);
+  });
+
   await step('Fuel: everyday Indian names find USDA foods, and the filter choice is remembered', async () => {
     await page.getByRole('button', { name: 'Add food' }).click();
     eq(await page.getByRole('button', { name: 'Non-veg', exact: true }).getAttribute('aria-pressed'), 'true', 'the last filter is remembered');
@@ -1208,9 +1223,10 @@ async function main() {
   await step('coach: edits exercises, rewrites a session, moves sessions to new weekdays for good, corrects a weight; each needs a tap and has an Undo', async () => {
     page.setDefaultTimeout(15000); // five AI round trips plus plan rebuilds: give a slow machine room
     await page.unroute('https://api.anthropic.com/**');
-    let nextCall = null, replies = 0;
+    let nextCall = null, replies = 0, calls = 0;
     await page.route('https://api.anthropic.com/**', async (r) => {
       if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: CORS });
+      calls++;
       const body = JSON.parse(r.request().postData() || '{}');
       const last = body.messages[body.messages.length - 1];
       const isResult = Array.isArray(last.content) && last.content.some((c) => c.type === 'tool_result');
@@ -1222,8 +1238,14 @@ async function main() {
       nextCall = { name, input };
       const n = await page.locator('.proposal').count();
       const box = page.getByLabel('Message');
-      await box.fill(text);
-      await box.press('Enter');
+      // If the screen redraws while typing the text is lost and nothing is sent; type it again until a request goes out.
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const sent = calls;
+        await box.fill(text);
+        await box.press('Enter');
+        for (let i = 0; i < 25 && calls === sent; i++) await page.waitForTimeout(100);
+        if (calls > sent) break;
+      }
       await page.waitForFunction((k) => document.body.innerText.split('Done, tap Apply.').length - 1 > k, replies);
       replies++;
       await page.waitForFunction((k) => document.querySelectorAll('.proposal').length > k, n, { timeout: 1500 }).catch(() => {}); // the reply text streams in before the cards are drawn
