@@ -474,6 +474,10 @@ async function main() {
     const sheet = page.locator('#sheets').last();
     ok(await sheet.getByText('Servings of 1 katori (150 g)', { exact: true }).count() === 1, 'the label is the plain serving');
     await sheet.getByText('150 kcal', { exact: true }).waitFor();
+    await sheet.getByText('1 serving = about 150 g', { exact: true }).waitFor();
+    await sheet.getByLabel(/Servings of/).fill('1.5');
+    await sheet.getByText('1.5 servings = about 225 g', { exact: true }).waitFor();
+    await sheet.getByText('225 kcal', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Dismiss this window' }).last().click();
     await page.evaluate((q) => Store.voidEvent(q), seq);
   });

@@ -69,3 +69,11 @@ test('an empty file still writes one (empty) piece instead of nothing', async ()
   assert.equal(calls.writes.length, 1);
   assert.equal(calls.writes[0].data, '');
 });
+
+test('the build number shown in Settings matches the service worker cache name', () => {
+  const fs = require('node:fs');
+  const sw = fs.readFileSync(require('node:path').join(__dirname, '..', 'sw.js'), 'utf8');
+  const util = fs.readFileSync(require('node:path').join(__dirname, '..', 'js', 'util.js'), 'utf8');
+  const cache = /regoal-shell-v(\d+)/.exec(sw), build = /const BUILD = (\d+);/.exec(util);
+  require('node:assert/strict').equal(build && build[1], cache && cache[1]);
+});

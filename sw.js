@@ -4,7 +4,7 @@
  * your data lives in IndexedDB, which this file cannot read.
  */
 'use strict';
-const CACHE = 'regoal-shell-v34';
+const CACHE = 'regoal-shell-v37';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/engine.js', 'js/diet.js', 'js/goals.js', 'js/util.js', 'js/native.js', 'js/crypto.js', 'js/store.js', 'js/llm.js', 'js/foods.js', 'js/foodai.js', 'js/liftai.js', 'js/photoalignai.js', 'js/coach.js', 'js/ui.js',
@@ -14,7 +14,8 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's own HTTP cache, which can hold files up to ten minutes old on a static host and would otherwise be stored as the "new" version.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
@@ -27,7 +28,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const hit = await cache.match(req, { ignoreSearch: true });
-    const refresh = fetch(req).then((res) => { if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()); return res; }).catch(() => null);
+    const refresh = fetch(req, { cache: 'no-cache' }).then((res) => { if (res && res.ok && res.type === 'basic') cache.put(req, res.clone()); return res; }).catch(() => null);
     if (hit) { e.waitUntil(refresh); return hit; }
     const res = await refresh;
     if (res) return res;

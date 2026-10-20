@@ -51,6 +51,16 @@
     return t.mult === 1 ? String(serving) : U.num(t.mult, 2) + ' x ' + t.label;
   }
 
+  // Grams in one serving: the weight the person set, or one in the serving's own name, e.g. "1 katori (150 g)" or "100 g".
+  function gramsPerServing(name, label) {
+    const set = stdFor(name, false);
+    if (set) return set;
+    const m = /\((\d+(?:\.\d+)?)\s*g\)/.exec(String(label || '')) || /^(\d+(?:\.\d+)?)\s*g$/.exec(String(label || '').trim());
+    const g = m ? Number(m[1]) : 0;
+    return g >= 1 && g <= 3000 ? g : 0;
+  }
+  const gramsText = (n, gps) => (gps && n > 0 ? U.num(n, 2) + (n === 1 ? ' serving' : ' servings') + ' = about ' + U.num(n * gps, 0) + ' g' : '');
+
   // ---------- what an AI-estimated food is made of ----------
   // The ingredients the estimate was built from, with their calories and macros. `k` scales them to the portion being shown;
   // the amounts in words ("1 cup") stay as first estimated. Anything read from the log is shown as plain text, never as markup.
@@ -170,7 +180,8 @@
     let amount = String(stdG ? Math.round(portion.amount * stdG * 10) / 10 : portion.amount);
     let meal = E.MEALS.includes(f.meal) ? f.meal : 'Snack';
     const live = h('div', { class: 'kv' });
-    const updLive = () => { const n = Math.max(0, numOrNull(amount) || 0); const m = asBasis(n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); drawItems(); };
+    const gps = portion.unit === 'x' && !stdG ? gramsPerServing(f.name, portion.label) : 0, gline = h('div', { class: 'muted small' });
+    const updLive = () => { const n = Math.max(0, numOrNull(amount) || 0); const m = asBasis(n); U.clear(live); U.put(live, h('span', null, m.kcal + ' kcal'), h('b', null, macroLine(m))); gline.textContent = gramsText(n, gps); drawItems(); };
     const amtField = UI.field({ label: isGrams ? 'Amount' : 'Portion (x ' + portion.label + ')', unit: isGrams ? 'g' : 'x', type: 'number', value: amount, flex: 1, onInput: (v) => { amount = v; updLive(); } });
     const quick = isGrams
       ? h('div', { class: 'pills' }, ...Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round((stdG || stdFor(f.name, true) || 100) * m * 10) / 10))).map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { amount = String(g); amtField.input.value = amount; updLive(); } }, g + ' g')))
@@ -186,7 +197,7 @@
     };
     const aiItems = aiList.length ? aiBox : null;
     updLive();
-    const body = h('div', { class: 'stack' }, name, amtField, quick, live,
+    const body = h('div', { class: 'stack' }, name, amtField, quick, live, gline,
       h('div', { class: 'muted small' }, isGrams ? 'Weigh the amount you actually had; calories and macros scale from it.' : 'Ate more or less than logged? Adjust the portion; calories and macros scale from it.'),
       UI.pills({ label: 'Meal', items: E.MEALS, values: new Set([meal]), multi: false, onChange: (v) => { meal = Array.from(v)[0]; } }),
       aiItems,
@@ -292,10 +303,11 @@
       const servings = () => { const n = Math.max(0, numOrNull(sv.input.value) || 0); return std ? n / std : n; };
       const aiList = cleanItems(f.ai), aiBox = h('div', { class: 'stack' });
       const drawIngr = () => { if (!aiList.length) return; U.clear(aiBox); U.put(aiBox, h('div', { class: 'lab' }, 'Made of'), h('div', null, ...ingredientRows(aiList, servings())), h('div', { class: 'muted small' }, 'From the AI estimate this was logged with. Calories and macros follow the amount you enter.')); };
-      const upd = () => { const n = servings(); U.clear(live); U.put(live, h('span', null, U.num(n * f.kcal, 0) + ' kcal'), h('b', null, macroLine({ protein: n * f.protein, carbs: n * f.carbs, fat: n * f.fat }))); drawIngr(); };
+      const gps = gramsPerServing(f.name, f.serving), gline = h('div', { class: 'muted small' });
+      const upd = () => { const n = servings(); U.clear(live); U.put(live, h('span', null, U.num(n * f.kcal, 0) + ' kcal'), h('b', null, macroLine({ protein: n * f.protein, carbs: n * f.carbs, fat: n * f.fat }))); gline.textContent = gramsText(n, gps); drawIngr(); };
       sv.input.addEventListener('input', upd); upd();
       const quick = std ? h('div', { class: 'pills' }, ...Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round(std * m * 10) / 10))).map((g) => h('button', { type: 'button', class: 'pill', onclick: () => { sv.input.value = String(g); upd(); } }, g + ' g' + (g === std ? ' · standard' : '')))) : null;
-      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'muted small' }, f.recent ? 'As you first logged it' + (std ? ': one serving of ' + f.serving + ' is ' + std + ' g.' : ': ' + f.serving + '.') : 'Values are typical and approximate. If yours is different, use Manual.'), sv, quick, live, aiList.length ? aiBox : null,
+      U.put(body, h('div', { class: 'ct' }, f.name), h('div', { class: 'muted small' }, f.recent ? 'As you first logged it' + (std ? ': one serving of ' + f.serving + ' is ' + std + ' g.' : ': ' + f.serving + '.') : 'Values are typical and approximate. If yours is different, use Manual.'), sv, quick, live, gline, aiList.length ? aiBox : null,
         h('button', { type: 'button', class: 'linkbtn', onclick: () => stdSheet(f.name, false, std, () => draw()) }, std ? 'Change what one serving weighs' : 'Log this in grams: set what one serving weighs'),
         h('div', { class: 'row' }, UI.btn('Back', { kind: 'quiet', onClick: () => { pick = null; draw(); } }), UI.btn('Log it', { onClick: async () => {
           const raw = numOrNull(sv.input.value), n = std ? raw / std : raw;

@@ -244,6 +244,7 @@
       UI.card(h('div', { class: 'ct' }, 'Storage'), info, h('div', { class: 'muted small' }, 'On iPhone, add Regoal to your Home Screen (Share, then Add to Home Screen). Safari can delete the data of sites you have not opened for about a week, and Home Screen apps are treated better.')),
       UI.card(h('div', { class: 'ct' }, 'What Regoal does and does not do'),
         h('div', { class: 'muted small' }, 'No account, no server, no analytics, no ads, no cookies. Data lives in this browser\'s storage. The only network calls are AI requests you trigger, straight to the provider you chose. Everything on screen is written as plain text, and a strict content policy blocks scripts from anywhere else.')),
+      UI.card(h('div', { class: 'ct' }, 'About this copy'), h('div', { class: 'kv' }, h('span', null, 'App version'), h('b', null, 'build ' + U.BUILD)), h('div', { class: 'muted small' }, 'After an update, close the app completely and open it again (twice if it still shows the old screens): the first open fetches the new files, the second runs them. In the Android app a new version needs a rebuilt APK.')),
       UI.card(h('div', { class: 'ct' }, 'Danger zone'), UI.btn('Erase everything on this device', { kind: 'danger', onClick: eraseSheet })),
       st.profile && st.profile.name ? null : null));
   };
