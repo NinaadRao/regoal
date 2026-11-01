@@ -420,6 +420,26 @@
           seq ? h('button', { class: 'btn quiet small', type: 'button', 'aria-label': 'Take ' + x.sess.name + ' off today', onclick: () => { Store.voidEvent(seq).then(() => root.App.render()); } }, 'Remove') : null),
         x.built.list));
     }
+    // Sessions of this Monday to Sunday week that were missed or replaced: still available, never counted against you.
+    const todo = onToday ? E.weekToDo(st, t) : [];
+    if (todo.length) {
+      const hereName = wo ? wo.name : null;
+      cards.push(UI.card(h('div', { class: 'ct' }, 'Still to do this week'),
+        h('div', { class: 'muted small' }, 'Not done yet, so still yours. Doing one today leaves every other day as it is.'),
+        ...todo.map((x) => {
+          const sess = plan.workouts.find((w) => w.name === x.name);
+          const doIt = async (extra) => {
+            await Store.append(extra ? 'session_added' : 'session_moved', { date: t, session: x.name }, 'user');
+            U.toast(x.name + (extra ? ' added to today.' : ' is today\'s session.') + (!extra && hereName ? ' ' + hereName + ' is still to do this week.' : ''));
+            root.App.render();
+          };
+          return h('div', { class: 'listrow' },
+            h('button', { type: 'button', class: 'grow linklike', 'aria-label': 'See ' + x.name, onclick: () => sess && Screens.sessionPreviewSheet(sess, Math.max(1, E.weekOf(plan.startDate, t)), plan, set.liftUnit) },
+              h('b', null, x.name), h('span', { class: 'muted small' }, x.missed ? 'Planned ' + U.shortDate(x.date) + ', not done' : 'Set aside, not done yet')),
+            wo ? h('button', { class: 'btn quiet small', type: 'button', 'aria-label': 'Do ' + x.name + ' today instead of ' + wo.name, onclick: () => doIt(false) }, 'Instead') : null,
+            h('button', { class: 'btn quiet small', type: 'button', 'aria-label': (wo ? 'Add ' : 'Do ') + x.name + ' today', onclick: () => doIt(!!wo) }, wo ? 'As well' : 'Do today'));
+        })));
+    }
     const gc = Screens.goalsTodayCard ? Screens.goalsTodayCard() : null;
     if (gc) cards.push(gc);
     cards.push(Screens.activityCard(st, set));

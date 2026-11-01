@@ -1091,7 +1091,7 @@ async function main() {
     if (!(await page.evaluate(() => window.__rest))) {
       await route(page, '#/today');
       await page.locator('.todayhead').getByRole('button', { name: 'Change', exact: true }).click(); // not the date picker's Change button
-      await page.locator('#sheets').getByRole('button', { name: /Skip it this week/ }).click();
+      await page.locator('#sheets').getByRole('button', { name: /Rest today/ }).click();
       await page.waitForFunction(() => { const st = Store.getState(); return !Engine.sessionFor(st.plan, st.moves, Engine.isoDate(new Date())).session; });
     }
     await route(page, '#/today');
@@ -1100,7 +1100,7 @@ async function main() {
     const sh = page.locator('#sheets');
     ok(/Train today\?/.test(await sh.innerText()), 'sheet asks which session');
     const name = await sh.locator('.listrow b').first().innerText();
-    ok(/Planned .*cleared|Done this week|Not on this week/.test(await sh.locator('.listrow').first().innerText()), 'each option says what it does to the week: ' + (await sh.locator('.listrow').first().innerText()).replace(/\n/g, ' '));
+    ok(/Replaces .* on this day only|Done this week/.test(await sh.locator('.listrow').first().innerText()), 'each option says what it does to the week: ' + (await sh.locator('.listrow').first().innerText()).replace(/\n/g, ' '));
     await sh.locator('.listrow').first().click();
     await page.waitForFunction((n) => { const st = Store.getState(); const s = Engine.sessionFor(st.plan, st.moves, Engine.isoDate(new Date())).session; return s && s.name === n; }, name);
     await route(page, '#/today');
@@ -1136,7 +1136,7 @@ async function main() {
     };
     await openChange();
     const sh = page.locator('#sheets').last();
-    ok(/nothing else moves or is cleared/.test(await sh.innerText()), 'the sheet explains Add as well');
+    ok(/Only this day changes/.test(await sh.innerText()) && /Add as well/.test(await sh.innerText()), 'the sheet explains that only today changes, and Add as well');
     // both ways are offered for the same session: swap (a row naming what it does to the week) and add
     ok(await sh.getByRole('button', { name: 'Add ' + other + ' as well' }).count() === 1, 'an Add option for each other session');
     await sh.getByRole('button', { name: 'Add ' + other + ' as well' }).click();
@@ -2991,6 +2991,34 @@ async function main() {
     await tdpage.getByRole('button', { name: 'Back to today' }).click();
     await tdpage.waitForFunction(() => !document.body.innerText.includes('Viewing '));
   });
+  await step('Today: doing a different session changes only today, and what was set aside stays under "Still to do this week"', async () => {
+    await route(tdpage, '#/today');
+    const snap = () => tdpage.evaluate(() => { const st = Store.getState(), t = U.today(); const mv = Object.assign({}, st.moves); delete mv[t]; return { others: JSON.stringify(mv), today: (Engine.sessionFor(st.plan, st.moves, t).session || {}).name || null, planned: (Engine.sessionFor(st.plan, st.moves, t).planned || {}).name || null, names: st.plan.workouts.map((w) => w.name), todo: Engine.weekToDo(st, t).map((x) => x.name) }; });
+    const before = await snap();
+    const listedNow = async () => { const c = tdpage.locator('#screen .card', { hasText: 'Still to do this week' }); return (await c.count()) ? (await c.locator('.listrow b').allInnerTexts()).map((x) => x.trim()) : []; };
+    eq((await listedNow()).sort(), before.todo.slice().sort(), 'the list shows what was missed earlier this week and is not coming up');
+    // do a session that is neither today's nor on the list
+    const other = before.names.find((n) => n !== before.today && !before.todo.includes(n));
+    await tdpage.locator('.todayhead').getByRole('button', { name: 'Change', exact: true }).or(tdpage.getByRole('button', { name: 'Train anyway' })).click();
+    const sh = tdpage.locator('#sheets').last();
+    await sh.locator('.listrow:not(.addon)', { hasText: other }).filter({ hasText: /Replaces|Done this week/ }).first().click();
+    await tdpage.waitForFunction((x) => { const st = Store.getState(); const s = Engine.sessionFor(st.plan, st.moves, U.today()).session; return s && s.name === x; }, other);
+    const after = await snap();
+    eq(after.others, before.others, 'no other day was cleared, moved or swapped');
+    await route(tdpage, '#/today');
+    const shown = (await listedNow()).sort();
+    eq(shown, after.todo.slice().sort(), 'the list matches the engine');
+    if (before.today) ok(shown.includes(before.today), 'the session that was replaced is offered again: ' + shown.join(', '));
+    ok(shown.length > 0, 'something is still to do');
+    // do one from the list instead of today's: only today changes again
+    const pick = shown[0];
+    await tdpage.locator('#screen .card', { hasText: 'Still to do this week' }).getByRole('button', { name: new RegExp('^Do ' + pick + ' today instead') }).click();
+    await tdpage.waitForFunction((x) => { const st = Store.getState(); const s = Engine.sessionFor(st.plan, st.moves, U.today()).session; return s && s.name === x; }, pick);
+    eq((await snap()).others, before.others, 'doing it from the list leaves every other day alone');
+    await route(tdpage, '#/today');
+    ok(!(await listedNow()).includes(pick), 'and it is off the list now that it is today\'s session');
+  });
+
   eq(tdproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
   await tdctx.close();
 

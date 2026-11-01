@@ -373,36 +373,54 @@ test('a plain exercise listed in several sessions is upgraded in every one; "non
   assert.ok(none.lifts.face_pull, 'but still tracked');
 });
 
-test('changing the day\'s session: the one you skip is moved to a free day, and nothing is counted as missed', () => {
+test('changing the day\'s session is today only: no other day is cleared, and the replaced session stays to do', () => {
   const { events } = base();
   const s = E.project(events);
   const apply = (state, r) => { const mv = Object.assign(Object.create(null), state.moves); for (const m of r.events) mv[m.date] = m.session; return mv; };
-  // Tuesday is Pull. Do Push instead: Push was due Monday and is not done, so Monday clears and Pull moves to the first free day (Saturday).
-  const r = E.changeSession(s, '2026-01-06', 'Push', '2026-01-06');
+  // Tuesday is Pull. Do Push instead: Push was due Monday and is not done. Only Tuesday changes.
+  const r = E.changeSession(s, '2026-01-06', 'Push');
+  assert.deepEqual(r.events, [{ date: '2026-01-06', session: 'Push' }]);
+  assert.equal(r.replaced, 'Pull'); assert.equal(r.moved, null); assert.equal(r.dropped, null);
   const mv = apply(s, r);
   assert.equal(E.sessionFor(s.plan, mv, '2026-01-06').session.name, 'Push');
-  assert.equal(E.sessionFor(s.plan, mv, '2026-01-05').session, null, 'Push is not on twice');
-  assert.equal(E.sessionFor(s.plan, mv, '2026-01-10').session.name, 'Pull', 'the displaced session got Saturday');
-  assert.deepEqual(r.moved, { name: 'Pull', date: '2026-01-10' });
-  assert.equal(r.dropped, null);
+  for (const d of ['2026-01-05', '2026-01-07', '2026-01-08', '2026-01-09', '2026-01-10', '2026-01-12']) assert.equal(E.sessionFor(s.plan, mv, d).session && E.sessionFor(s.plan, mv, d).session.name, E.sessionFor(s.plan, s.moves, d).session && E.sessionFor(s.plan, s.moves, d).session.name, d + ' is untouched');
   // Choosing the session that is already there changes nothing; an unknown name changes nothing.
-  assert.deepEqual(E.changeSession(s, '2026-01-06', 'Pull', '2026-01-06').events, []);
-  assert.deepEqual(E.changeSession(s, '2026-01-06', 'Ghost', '2026-01-06').events, []);
-  // Push already done on Monday: it may be done again on Tuesday, the other Push day is left alone and Pull still moves.
-  const e2 = base().events; const ids = s.plan.workouts.find((w) => w.name === 'Push').ex.map(E.exId);
-  for (const id of ids.slice(0, 4)) e2.push(set('2026-01-05', id), set('2026-01-05', id));
-  const s2 = E.project(e2), r2 = E.changeSession(s2, '2026-01-06', 'Push', '2026-01-06');
-  assert.ok(!r2.events.some((m) => m.session === 'rest'), 'nothing to clear: Push is already done this week');
-  assert.equal(r2.moved && r2.moved.name, 'Pull');
-  // A session that was already done is not shoved anywhere when it gets replaced.
-  const e3 = base().events; for (const id of s.plan.workouts.find((w) => w.name === 'Pull').ex.map(E.exId).slice(0, 4)) e3.push(set('2026-01-06', id), set('2026-01-06', id));
-  const r3 = E.changeSession(E.project(e3), '2026-01-06', 'Legs', '2026-01-06');
-  assert.equal(r3.moved, null); assert.equal(r3.dropped, null);
-  // With no free day left in the week the displaced session comes off the week and is reported as dropped.
-  const e4 = base().events; e4.push(ev('session_moved', { date: '2026-01-10', session: 'Push' }), ev('session_moved', { date: '2026-01-11', session: 'Pull' }));
-  const r4 = E.changeSession(E.project(e4), '2026-01-09', 'Legs', '2026-01-09');
-  assert.equal(r4.dropped, 'Lower');
-  assert.equal(r4.moved, null);
+  assert.deepEqual(E.changeSession(s, '2026-01-06', 'Pull').events, []);
+  assert.deepEqual(E.changeSession(s, '2026-01-06', 'Ghost').events, []);
+  // On a rest day nothing is replaced.
+  assert.equal(E.changeSession(s, '2026-01-10', 'Pull').replaced, null);
+});
+
+test('calendar weeks run Monday to Sunday, whatever day the plan started on', () => {
+  assert.deepEqual(E.calWeek('2026-01-05'), ['2026-01-05', '2026-01-11']);
+  assert.deepEqual(E.calWeek('2026-01-11'), ['2026-01-05', '2026-01-11']);
+  assert.deepEqual(E.calWeek('2026-01-12'), ['2026-01-12', '2026-01-18']);
+});
+
+test('still to do this week: missed and replaced sessions stay available, finished and upcoming ones do not', () => {
+  const { events } = base();
+  const s = E.project(events);
+  const names = (st, d) => E.weekToDo(st, d).map((x) => x.name);
+  // Thursday with nothing logged: Push, Pull and Legs were missed; Upper is today; Lower is still to come.
+  assert.deepEqual(names(s, '2026-01-08'), ['Push', 'Pull', 'Legs']);
+  assert.equal(E.weekToDo(s, '2026-01-08')[0].missed, true);
+  // Pull done on Tuesday: it drops off the list.
+  const e2 = base().events; for (const id of s.plan.workouts.find((w) => w.name === 'Pull').ex.map(E.exId).slice(0, 4)) e2.push(set('2026-01-06', id), set('2026-01-06', id));
+  assert.deepEqual(names(E.project(e2), '2026-01-08'), ['Push', 'Legs']);
+  // Doing Push on Thursday instead of Upper: Push is done, Upper (replaced) is now on the list, nothing else moved.
+  const e3 = base().events.concat(ev('session_moved', { date: '2026-01-08', session: 'Push' }));
+  for (const id of s.plan.workouts.find((w) => w.name === 'Push').ex.map(E.exId).slice(0, 4)) e3.push(set('2026-01-08', id), set('2026-01-08', id));
+  const s3 = E.project(e3);
+  assert.deepEqual(names(s3, '2026-01-08'), ['Pull', 'Legs', 'Upper']);
+  assert.equal(E.weekToDo(s3, '2026-01-08').find((x) => x.name === 'Upper').missed, false, 'planned today, so replaced rather than missed');
+  // A replaced session today shows up the same day the swap is made.
+  const s4 = E.project(base().events.concat(ev('session_moved', { date: '2026-01-06', session: 'Push' })));
+  assert.deepEqual(names(s4, '2026-01-06'), ['Pull']);
+  // A new week starts clean: last week's misses are gone.
+  assert.deepEqual(names(s, '2026-01-12'), [], 'Monday: today\'s Push is on the plan, the rest are still to come');
+  // A session added on top of today is not offered again.
+  const s5 = E.project(base().events.concat(ev('session_added', { date: '2026-01-08', session: 'Push' })));
+  assert.deepEqual(names(s5, '2026-01-08'), ['Pull', 'Legs']);
 });
 
 test('the coach relocating a session swaps it, adds it, or leaves it, and always from the live state', () => {
@@ -421,6 +439,9 @@ test('the coach relocating a session swaps it, adds it, or leaves it, and always
   assert.deepEqual(E.relocateSession(s, 'Ghost', '2026-01-10', today).events, []);
   // Legs done on Wednesday already: asking for it on Saturday adds it there and does not clear the done day.
   const e = base().events; for (const id of s.plan.workouts.find((w) => w.name === 'Legs').ex.map(E.exId).slice(0, 4)) e.push(set('2026-01-07', id), set('2026-01-07', id));
+  // Push is only planned again next Monday (another calendar week): asking for it on Thursday does it that day and leaves Monday alone.
+  const d = E.relocateSession(s, 'Push', '2026-01-08', '2026-01-08');
+  assert.deepEqual(d.events, [{ date: '2026-01-08', session: 'Push' }]); assert.equal(d.from, null); assert.equal(d.displaced, 'Upper');
   const c = E.relocateSession(E.project(e), 'Legs', '2026-01-10', '2026-01-08');
   assert.deepEqual(c.events.map((m) => m.date + ':' + m.session), ['2026-01-10:Legs']);
 });

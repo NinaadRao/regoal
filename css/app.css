@@ -447,3 +447,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .goalprev { display: flex; flex-direction: column; gap: 8px; }
 
 .foodrow .ings { display: block; margin-top: 2px; }
+
+/* a row in the "still to do" list: the name opens a preview, the buttons put it on today */
+.listrow .linklike { background: none; border: 0; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-height: 44px; justify-content: center; }
+.listrow .btn + .btn { margin-left: 6px; }

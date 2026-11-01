@@ -1317,41 +1317,46 @@
     const b = sessionFor(plan, moves, toDate).session;
     return [{ date: toDate, session: a.name }, { date: fromDate, session: b ? b.name : 'rest' }];
   }
-  // Do session `name` on `date` instead of whatever is planned there. Returns { events, moved, dropped }.
-  // If `name` is still to do on another day of that plan week, that day is cleared (or takes the displaced session, if it is
-  // later). The displaced session gets the next free day that week, or comes off the week: it is never counted as missed.
-  function changeSession(state, date, name, today) {
+  // The Monday to Sunday week a date is in. Plan weeks start on the plan's own start date, which is rarely a Monday, so
+  // "this week" for the person (what is still to do) is the calendar week instead.
+  function calWeek(date) { const a = addDays(date, -((weekdayOf(date) + 6) % 7)); return [a, addDays(a, 6)]; }
+  // Do session `name` on `date` instead of whatever is planned there. Today only: no other day is cleared, moved or
+  // pulled from, and the session that is replaced simply stays not done (it shows under "Still to do this week").
+  function changeSession(state, date, name) {
     const plan = state.plan, target = plan.workouts.find((w) => w.name === name);
-    const none = { events: [], moved: null, dropped: null };
+    const none = { events: [], moved: null, dropped: null, replaced: null };
     if (!target) return none;
     const cur = sessionFor(plan, state.moves, date).session;
     if (cur && cur.name === name) return none;
-    const week = weekOf(plan.startDate, date), idx = setIndex(state), b = weekRange(plan.startDate, week)[1], a = weekRange(plan.startDate, week)[0];
-    const out = new Map([[date, name]]);
-    let from = null;
-    if (!sessionDoneIn(state, target, week, idx)) {
-      for (let d = a; d <= b && !from; d = addDays(d, 1)) if (d !== date) { const s = sessionFor(plan, state.moves, d).session; if (s && s.name === name) from = d; }
-    }
-    if (from) out.set(from, 'rest');
-    let moved = null, dropped = null;
-    if (cur && !sessionDoneIn(state, cur, week, idx)) {
-      let home = from && from > date ? from : null;
-      for (let d = addDays(date, 1); d <= b && !home; d = addDays(d, 1)) if (!out.has(d) && !sessionFor(plan, state.moves, d).session) home = d;
-      if (home) { out.set(home, cur.name); moved = { name: cur.name, date: home }; } else dropped = cur.name;
-    }
-    return { events: Array.from(out, ([d, n]) => ({ date: d, session: n })), moved, dropped };
+    return { events: [{ date, session: name }], moved: null, dropped: null, replaced: cur ? cur.name : null };
   }
-  // Move a named session to `to`: swap with what is there, or, if it is not on the coming plan, add it on that day.
+  // Sessions of this Monday to Sunday week that are not done and are not on a day still to come: the ones that were
+  // missed or that were replaced. They stay available all week. `here` is what is already planned or added for today.
+  function weekToDo(state, today) {
+    const plan = state.plan, [a, b] = calWeek(today), idx = setIndex(state), first = {}, later = new Set();
+    const here = new Set(extrasFor(state, today).map((x) => x.name));
+    const cur = sessionFor(plan, state.moves, today).session;
+    if (cur) here.add(cur.name);
+    for (let d = a; d <= b; d = addDays(d, 1)) {
+      if (d < plan.startDate) continue;
+      const f = sessionFor(plan, state.moves, d);
+      for (const x of [f.planned, f.session]) if (x && first[x.name] == null) first[x.name] = d;
+      if (f.session && d > today) later.add(f.session.name);
+    }
+    return plan.workouts.filter((w) => first[w.name] != null && !here.has(w.name) && !later.has(w.name) && !sessionDoneBetween(state, w, a, b, idx))
+      .map((w) => ({ name: w.name, date: first[w.name], missed: first[w.name] < today }));
+  }
+  // Move a named session to `to`: swap with what is there, or, if it is not still to do this week, do it on that day only.
   function relocateSession(state, name, to, today) {
     const plan = state.plan, idx = setIndex(state);
     let from = null;
-    const toWeek = weekOf(plan.startDate, to);
-    // only a session still to do in the same plan week is swapped: moving it across weeks would quietly empty another week
-    for (let i = 0; i <= 13 && !from; i++) { const d = addDays(today, i), wk = weekOf(plan.startDate, d), s = sessionFor(plan, state.moves, d).session; if (wk === toWeek && s && s.name === name && !sessionDoneIn(state, s, wk, idx)) from = d; }
+    const [wa, wb] = calWeek(to);
+    // only a session still to do in the same Monday to Sunday week is swapped: moving it across weeks would quietly empty another week
+    for (let i = 0; i <= 13 && !from; i++) { const d = addDays(today, i), s = sessionFor(plan, state.moves, d).session; if (d >= wa && d <= wb && s && s.name === name && !sessionDoneBetween(state, s, wa, wb, idx)) from = d; }
     if (from === to) return { events: [], from, displaced: null, dropped: null };
     if (from) { const there = sessionFor(plan, state.moves, to).session; return { events: moveSession(plan, state.moves, from, to), from, displaced: there ? there.name : null, dropped: null }; }
-    const r = changeSession(state, to, name, today);
-    return { events: r.events, from: null, displaced: r.moved ? r.moved.name : null, dropped: r.dropped };
+    const r = changeSession(state, to, name);
+    return { events: r.events, from: null, displaced: r.replaced, dropped: null };
   }
   // Working sets grouped by day.
   function setIndex(state) {
@@ -1363,6 +1368,9 @@
   // at least half of its exercises got working sets. It does not matter which weekday that was.
   function sessionDoneIn(state, session, week, idx) {
     const [a, b] = weekRange(state.plan.startDate, week);
+    return sessionDoneBetween(state, session, a, b, idx);
+  }
+  function sessionDoneBetween(state, session, a, b, idx) {
     if (state.workouts.some((w) => w.type === 'strength' && w.session === session.name && w.date >= a && w.date <= b)) return true;
     if (!session.ex.length) return false;
     for (let d = a; d <= b; d = addDays(d, 1)) {
@@ -1479,7 +1487,7 @@
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
     LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor, cleanPhotoAlign, photoAlignFor, normalizePhotoAlign,
-    validISO, hasLift, portionKey, cleanStdPortion, extrasFor, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
+    validISO, hasLift, portionKey, cleanStdPortion, extrasFor, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, calWeek, weekToDo, sessionDoneBetween, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };

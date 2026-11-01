@@ -385,7 +385,6 @@
   function rescheduleSheet(date) {
     const st = Store.getState(), plan = st.plan, t = U.today();
     const f = E.sessionFor(plan, st.moves, date);
-    const wp = E.weekPlan(st, E.weekOf(plan.startDate, date), t);
     let close = () => {};
     const apply = async (events, msg) => {
       close();
@@ -406,26 +405,22 @@
     const others = plan.workouts.filter((w) => !f.session || w.name !== f.session.name);
     if (others.length) {
       body.appendChild(h('div', { class: 'ct' }, f.session ? 'Or do a different session' : 'Train anyway'));
-      body.appendChild(h('div', { class: 'muted small' }, 'Tap a session to do it today instead of ' + (f.session ? f.session.name : 'resting') + '; the rest of the week shuffles around it. Or choose Add as well: it goes on top of today and nothing else moves or is cleared.'));
-      const list = h('div', { class: 'list' }), week = E.weekOf(plan.startDate, date), idx = E.setIndex(st);
+      body.appendChild(h('div', { class: 'muted small' }, 'Tap a session to do it ' + (date === t ? 'today' : 'that day') + ' instead of ' + (f.session ? f.session.name : 'resting') + '. Only this day changes: no other day is touched' + (f.session ? ', and ' + f.session.name + ' stays under "Still to do this week" until you do it' : '') + '. Or choose Add as well to put it on top.'));
+      const list = h('div', { class: 'list' }), [wa, wb] = E.calWeek(date), idx = E.setIndex(st);
       const added = new Set(((st.extras && st.extras[date]) || []));
       for (const w of others) {
-        const r = E.changeSession(st, date, w.name, t);
-        const entry = wp.find((p) => p.name === w.name && p.date !== date);
+        const r = E.changeSession(st, date, w.name);
         const parts = [];
-        if (E.sessionDoneIn(st, w, week, idx)) parts.push('Done this week, so this is an extra one.');
-        else if (entry) parts.push('Planned ' + dayLabel(entry.date) + ', and that day is cleared.');
-        else parts.push('Not on this week\'s plan.');
-        if (r.moved) parts.push(r.moved.name + ' moves to ' + dayLabel(r.moved.date) + '.');
-        if (r.dropped) parts.push(r.dropped + ' comes off this week.');
-        list.appendChild(row(w.name, parts.join(' '), () => apply(r.events, w.name + ' is today\'s session' + (r.moved ? ', and ' + r.moved.name + ' is on ' + dayLabel(r.moved.date) : '') + '.')));
+        if (E.sessionDoneBetween(st, w, wa, wb, idx)) parts.push('Done this week, so this is an extra one.');
+        else parts.push('Replaces ' + (f.session ? f.session.name : 'rest') + ' on this day only.');
+        list.appendChild(row(w.name, parts.join(' '), () => apply(r.events, w.name + ' is on ' + (date === t ? 'today' : dayLabel(date)) + (r.replaced ? '. ' + r.replaced + ' is still to do this week.' : '.'))));
         if (!added.has(w.name)) list.appendChild(h('button', { type: 'button', class: 'listrow addon', onclick: async () => { close(); await Store.append('session_added', { date, session: w.name }, 'user'); U.toast(w.name + ' added to ' + (date === t ? 'today' : dayLabel(date)) + '. Nothing else moved.'); root.App.render(); } },
           h('div', { class: 'grow' }, h('b', null, 'Add ' + w.name + ' as well'), h('span', { class: 'muted small' }, 'On top of ' + (f.session ? f.session.name : 'today') + '. Nothing moves, nothing is cleared.')), U.icon('plus', 16)));
       }
       body.appendChild(list);
     }
     if (f.session) {
-      body.appendChild(h('div', { class: 'list' }, row('Skip it this week', f.session.name + ' comes off the plan. Your coach will not count it as missed.', () => apply([{ date, session: 'rest' }], 'Rest day.'))));
+      body.appendChild(h('div', { class: 'list' }, row('Rest today', f.session.name + ' stays under "Still to do this week". Your coach will not count it as missed.', () => apply([{ date, session: 'rest' }], 'Rest day. ' + f.session.name + ' is still to do this week.'))));
     }
     body.appendChild(h('div', { class: 'muted small' }, 'The plan is a suggestion. Lifts, calories and weekly targets do not depend on the weekday, so nothing else changes.'));
     close = U.sheet(f.session ? 'Change today\'s plan' : 'Train today?', body, [{ label: 'Close' }]);
