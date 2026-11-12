@@ -315,6 +315,8 @@ async function main() {
     await page.waitForSelector('.foodrow');
     const f = (await events(page)).filter((e) => e.type === 'food_logged').pop().data;
     eq([f.kcal, f.source], [410, 'manual']);
+    const mm = (await page.locator('.mealmacros').first().innerText()).replace(/\s+/g, ' ');
+    ok(/20 g protein/.test(mm) && /60 g carbs/.test(mm) && /10 g fat/.test(mm), 'each meal section shows its own protein, carbs and fat: ' + mm);
     // mismatch: 900 kcal with tiny macros
     await page.getByRole('button', { name: 'Add food' }).click();
     await page.getByRole('tab', { name: 'Manual' }).click();

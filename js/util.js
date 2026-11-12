@@ -206,7 +206,7 @@
   // The app's name and mark, and its tagline: one place, used on the welcome screen and on Profile.
   const TAGLINE = ['Track the change.', 'Not the vibes.'];
   // Shown in Settings so it is clear which copy of the app is running. Keep in step with CACHE in sw.js (a unit test checks).
-  const BUILD = 38;
+  const BUILD = 39;
   function brandMark() { return h('div', { class: 'brand' }, h('div', { class: 'app-icon' }, logoSvg(36)), h('div', { class: 'display wordmark' }, 'REGOAL')); }
 
   root.U = { TAGLINE, BUILD, brandMark, h, s, put, clear, num, withCommas, kgToUnit, unitToKg, fmtWeight, fmtLift, cmToUnit, unitToCm, fmtLen, today, longDate, shortDate, b64, unb64, toast, sheet, confirmSheet, chip, bar, icon, logoSvg, lineChart, PAL, DOW, MON };

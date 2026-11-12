@@ -145,8 +145,11 @@
       const items = day.filter((f) => (E.MEALS.includes(f.meal) ? f.meal : 'Snack') === meal);
       if (!items.length) continue;
       const sub = items.reduce((tt, f) => tt + (f.kcal || 0), 0);
+      const mt = items.reduce((a, f) => ({ protein: a.protein + (f.protein || 0), carbs: a.carbs + (f.carbs || 0), fat: a.fat + (f.fat || 0) }), { protein: 0, carbs: 0, fat: 0 });
       sections.push(UI.card(
         h('div', { class: 'mealhead' }, h('div', { class: 'ct' }, meal), h('span', { class: 'muted small' }, U.withCommas(sub) + ' kcal')),
+        h('div', { class: 'mealmacros', 'aria-label': meal + ' totals' },
+          h('span', null, h('b', null, U.num(mt.protein, 0) + ' g'), ' protein'), h('span', null, h('b', null, U.num(mt.carbs, 0) + ' g'), ' carbs'), h('span', null, h('b', null, U.num(mt.fat, 0) + ' g'), ' fat')),
         ...items.map((f) => h('button', { type: 'button', class: 'listrow foodrow', 'aria-label': 'Edit ' + f.name, onclick: () => editSheet(f) },
           h('div', { class: 'fn' }, h('b', null, f.name), h('span', { class: 'muted small' }, macroLine(f) + (f.serving ? ' · ' + servingText(f.serving) : '')), f.ai && ingredientLine(f.ai) ? h('span', { class: 'muted small ings' }, 'Made of: ' + ingredientLine(f.ai)) : null),
           f.ai ? U.chip(f.ai.edited ? 'AI, edited' : 'AI est.', 'acc') : null,

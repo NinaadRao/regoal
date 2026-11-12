@@ -214,6 +214,8 @@ select.inp { appearance: none; }
 .daynav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .daynav .d { font-family: var(--fd); font-weight: 800; font-size: 22px; }
 .mealhead { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.mealmacros { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink2); padding: 2px 0 6px; border-bottom: 1px solid var(--line); }
+.mealmacros b { color: var(--ink); font-weight: 600; }
 .foodrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .foodrow:last-child { border-bottom: 0; }
 .foodrow .fn { flex: 1; min-width: 0; }
