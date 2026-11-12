@@ -3021,6 +3021,25 @@ async function main() {
     ok(!(await listedNow()).includes(pick), 'and it is off the list now that it is today\'s session');
   });
 
+  await step('Activity: a streak freeze covers a day, shows on the strip, counts against two a month, and can be taken back', async () => {
+    await route(tdpage, '#/activity');
+    const card = tdpage.locator('#screen .card', { hasText: 'Streak freeze' });
+    ok(/2 of 2/.test(await card.innerText()), 'two freezes to start with: ' + (await card.innerText()).replace(/\n/g, ' '));
+    eq(await tdpage.locator('.dot.ice').count(), 0, 'nothing frozen yet');
+    await card.getByRole('button', { name: 'Use a freeze' }).click();
+    const sh = tdpage.locator('#sheets').last();
+    ok(/Pick a day you could not train/.test(await sh.innerText()), 'the sheet explains what a freeze does');
+    await sh.locator('.listrow').first().click();
+    await tdpage.waitForFunction(() => Object.keys(Store.getState().freezes).length === 1);
+    await route(tdpage, '#/activity');
+    eq(await tdpage.locator('.dot.ice').count(), 1, 'the frozen day shows on the strip');
+    ok(/1 of 2/.test(await tdpage.locator('#screen .card', { hasText: 'Streak freeze' }).innerText()), 'one left');
+    await tdpage.getByRole('button', { name: /Take back the freeze on/ }).click();
+    await tdpage.waitForFunction(() => Object.keys(Store.getState().freezes).length === 0);
+    await route(tdpage, '#/activity');
+    ok(/2 of 2/.test(await tdpage.locator('#screen .card', { hasText: 'Streak freeze' }).innerText()), 'taking it back gives it back');
+  });
+
   eq(tdproblems.filter((p) => !/Failed to load resource/.test(p)), [], 'console problems');
   await tdctx.close();
 

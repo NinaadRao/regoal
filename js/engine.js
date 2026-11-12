@@ -631,7 +631,7 @@
   function project(events) {
     const voided = new Set();
     for (const e of events) if (e.type === 'event_voided') voided.add(e.data.target);
-    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), extras: Object.create(null), extraSeqs: Object.create(null), portions: Object.create(null), exSwitches: Object.create(null), photoAligns: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
+    const s = { profile: null, plan: null, weights: [], meas: [], foods: [], sets: [], photos: [], clips: [], workouts: [], water: [], moves: Object.create(null), extras: Object.create(null), extraSeqs: Object.create(null), freezes: Object.create(null), portions: Object.create(null), exSwitches: Object.create(null), photoAligns: Object.create(null), revisions: [], dietPrefs: null, goals: Object.create(null), goalOrder: [], goalEntries: [] };
     for (const e of events) {
       if (voided.has(e.seq) || e.type === 'event_voided') continue;
       const d = e.data || {};
@@ -660,6 +660,12 @@
         case 'session_added': {
           const date = String(d.date || ''), name = cleanStr(d.session, 40);
           if (validISO(date) && name) { const a = s.extras[date] || (s.extras[date] = []); if (!a.includes(name) && a.length < 3) { a.push(name); s.extraSeqs[date + '|' + name] = e.seq; } }
+          break;
+        }
+        case 'streak_freeze': {
+          // a frozen day keeps a streak going. At most FREEZES_PER_MONTH per calendar month: later ones in the log are ignored.
+          const date = String(d.date || '');
+          if (validISO(date) && !s.freezes[date] && Object.keys(s.freezes).filter((x) => x.slice(0, 7) === date.slice(0, 7)).length < FREEZES_PER_MONTH) s.freezes[date] = e.seq;
           break;
         }
         case 'exercise_switched': { const r = cleanExerciseSwitch(d); if (r.ok) s.exSwitches[r.value.date + '|' + r.value.from] = Object.assign({ seq: e.seq }, r.value); break; }
@@ -1036,7 +1042,7 @@
   }
 
   // ---------- backup / import validation ----------
-  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'photo_aligned', 'profile_edited', 'diet_prefs_set', 'food_portion_set', 'session_added', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
+  const EVENT_TYPES = ['profile_created', 'plan_revised', 'weight_logged', 'measurement_logged', 'food_logged', 'set_logged', 'photo_added', 'clip_added', 'workout_logged', 'session_moved', 'exercise_switched', 'photo_aligned', 'profile_edited', 'diet_prefs_set', 'food_portion_set', 'session_added', 'streak_freeze', 'goal_set', 'goal_entry', 'water_logged', 'event_voided'];
   const BAD_KEYS = ['__proto__', 'constructor', 'prototype'];
   function hasBadKeys(o, depth) {
     if (o === null || typeof o !== 'object') return false;
@@ -1137,6 +1143,8 @@
   }
 
   // ---------- food logging ----------
+  const FREEZES_PER_MONTH = 2;
+  const FREEZE_LOOKBACK_DAYS = 6;
   const MEALS = ['Breakfast', 'Pre-workout', 'Post-workout', 'Lunch', 'Snack', 'Dinner'];
   const FOOD_MAX_KCAL = 3000;
   function macroKcal(p, c, f) { return 4 * (p || 0) + 4 * (c || 0) + 9 * (f || 0); }
@@ -1402,18 +1410,24 @@
     for (const x of state.sets) if (!x.warmup && typeof x.date === 'string') { const o = get(x.date); o.sets++; if (!o.kinds.includes('strength')) o.kinds.push('strength'); }
     return m;
   }
-  function dayStreaks(days, today) {
-    let cur = 0, d = days.has(today) ? today : addDays(today, -1);
-    while (days.has(d)) { cur++; d = addDays(d, -1); }
+  // A frozen day does not add to the count, but it does not break the run either.
+  function dayStreaks(days, today, frozen) {
+    const fz = frozen || new Set(), on = (d) => days.has(d) || fz.has(d);
+    let cur = 0, d = on(today) ? today : addDays(today, -1);
+    while (on(d)) { if (days.has(d)) cur++; d = addDays(d, -1); }
     let best = 0, run = 0, prev = null;
-    for (const k of Array.from(days.keys()).filter((x) => x <= today).sort()) { run = prev && daysBetween(prev, k) === 1 ? run + 1 : 1; if (run > best) best = run; prev = k; }
+    for (const k of Array.from(new Set([...days.keys(), ...fz])).filter((x) => x <= today).sort()) {
+      const add = days.has(k) ? 1 : 0;
+      run = prev && daysBetween(prev, k) === 1 ? run + add : add;
+      if (run > best) best = run; prev = k;
+    }
     return { cur, best };
   }
-  // Weeks in a row (plan weeks) with at least `goal` active days. The week in progress never breaks a streak; it only adds to it once the goal is met.
-  function weekStreaks(days, start, today, goal) {
+  // Weeks in a row (plan weeks) with at least `goal` active days; a frozen day counts toward the goal. The week in progress never breaks a streak; it only adds to it once the goal is met.
+  function weekStreaks(days, start, today, goal, frozen) {
     const wi = (d) => Math.floor(daysBetween(start, d) / 7);
     const per = new Map();
-    for (const k of days.keys()) if (k <= today) per.set(wi(k), (per.get(wi(k)) || 0) + 1);
+    for (const k of new Set([...days.keys(), ...(frozen || [])])) if (k <= today) per.set(wi(k), (per.get(wi(k)) || 0) + 1);
     const cw = wi(today);
     let cur = 0, w = (per.get(cw) || 0) >= goal ? cw : cw - 1;
     while ((per.get(w) || 0) >= goal) { cur++; w--; }
@@ -1421,14 +1435,27 @@
     for (const k of Array.from(per.keys()).filter((x) => per.get(x) >= goal).sort((a, b) => a - b)) { run = prev != null && k === prev + 1 ? run + 1 : 1; if (run > best) best = run; prev = k; }
     return { cur, best, thisWeekDays: per.get(cw) || 0 };
   }
+  // Freezes: up to FREEZES_PER_MONTH a calendar month, each covering one day with no activity.
+  function freezeStatus(state, today) {
+    const month = today.slice(0, 7), used = Object.keys(state.freezes).filter((d) => d.slice(0, 7) === month).sort();
+    const days = dayIndex(state), start = state.plan.startDate, can = [];
+    for (let i = 0; i <= FREEZE_LOOKBACK_DAYS; i++) {
+      const d = addDays(today, -i);
+      if (d < start || days.has(d) || state.freezes[d]) continue;
+      if (Object.keys(state.freezes).filter((x) => x.slice(0, 7) === d.slice(0, 7)).length >= FREEZES_PER_MONTH) continue;
+      can.push(d);
+    }
+    return { month, max: FREEZES_PER_MONTH, used: used.length, left: Math.max(0, FREEZES_PER_MONTH - used.length), usedDates: used, canFreeze: can };
+  }
   function activitySummary(state, today, goal) {
     const days = dayIndex(state), g = clamp(Math.round(goal) || 4, 1, 7), start = state.plan.startDate;
-    const ds = dayStreaks(days, today), ws = weekStreaks(days, start, today, g);
+    const fz = new Set(Object.keys(state.freezes).filter((d) => !days.has(d) && d <= today)), ds = dayStreaks(days, today, fz), ws = weekStreaks(days, start, today, g, fz);
     const week = weekOf(start, today), [a, b] = weekRange(start, week);
-    const tw = { week, days: 0, goal: g, mins: 0, kcal: 0, workouts: 0 };
+    const tw = { week, days: 0, frozen: 0, goal: g, mins: 0, kcal: 0, workouts: 0 };
     for (const [k, o] of days) if (k >= a && k <= b && k <= today) { tw.days++; tw.mins += o.mins; tw.kcal += o.kcal; tw.workouts += o.workouts; }
+    for (const k of fz) if (k >= a && k <= b) tw.frozen++;
     const last14 = [];
-    for (let i = 13; i >= 0; i--) { const d = addDays(today, -i), o = days.get(d); last14.push({ date: d, active: !!o, kinds: o ? o.kinds.slice() : [] }); }
+    for (let i = 13; i >= 0; i--) { const d = addDays(today, -i), o = days.get(d); last14.push({ date: d, active: !!o, frozen: fz.has(d), kinds: o ? o.kinds.slice() : [] }); }
     const past = Array.from(days.keys()).filter((k) => k <= today).sort();
     const lastActive = past.length ? past[past.length - 1] : null;
     const totals = { days: past.length, workouts: 0, mins: 0, kcal: 0 };
@@ -1469,7 +1496,7 @@
       .map((w) => ({ date: w.date, activity: workoutName(w), mins: w.mins, kcal: w.kcal, effort: w.effort, session: w.session || undefined }));
     const moves = Object.keys(state.moves).filter((d) => d >= addDays(today, -14) && d <= addDays(today, 7)).sort().map((d) => ({ date: d, session: state.moves[d] }));
     return {
-      goalActiveDaysPerWeek: sum.goal, dayStreak: sum.dayStreak, weekStreak: sum.weekStreak, bestWeekStreak: sum.bestWeekStreak, daysSinceLastActive: sum.daysSince,
+      goalActiveDaysPerWeek: sum.goal, streakFreezesLeftThisMonth: freezeStatus(state, today).left, frozenDaysThisWeek: sum.thisWeek.frozen, dayStreak: sum.dayStreak, weekStreak: sum.weekStreak, bestWeekStreak: sum.bestWeekStreak, daysSinceLastActive: sum.daysSince,
       thisWeek: { activeDays: sum.thisWeek.days, mins: sum.thisWeek.mins, activeKcal: sum.thisWeek.kcal, sessions: weekPlan(state, week, today).map((p) => ({ session: p.name, date: p.date, status: p.status, movedFromPlan: p.moved })) },
       last4Weeks: wks.map((r) => ({ week: r.week, activeDays: r.days, mins: r.mins, activeKcal: r.kcal, plannedSessions: r.planned, doneSessions: r.done })),
       mix28d: activityMix(state, since, today).map((m) => ({ activity: m.name, sessions: m.sessions, mins: m.mins, activeKcal: m.kcal })),
@@ -1487,7 +1514,7 @@
     weightAround, measAround, snapshotAt, checkIns, goalDir, changeTone,
     liftStatus, reviewMonth, checkpoint, validateEvents, hasBadKeys, EVENT_TYPES, cleanProfileEdit, PROFILE_DIETS, DIET_STYLES, DIET_CUISINES, DIET_AVOID, DIET_SLOTS, styleFromProfile, defaultDietPrefs, cleanDietPrefs,
     LIFT_MUSCLES, LIFT_EQUIP, LIFT_CLS, defaultGain, cleanLift, newLiftId, slug, exId, substituteCandidates, normalizeLiftSwap, EQUIP_LIST, cleanExerciseSwitch, exSwitchFor, cleanPhotoAlign, photoAlignFor, normalizePhotoAlign,
-    validISO, hasLift, portionKey, cleanStdPortion, extrasFor, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, calWeek, weekToDo, sessionDoneBetween, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
+    validISO, hasLift, portionKey, cleanStdPortion, extrasFor, WEEKDAY_NAMES, weekdayFromName, weekdayMapAt, cleanSchedule, canonMuscle, cleanSessionExercise, findSessionExercise, applySessionEdits, applyWorkoutChanges, previewWorkoutChanges, changeSession, relocateSession, freezeStatus, FREEZES_PER_MONTH, calWeek, weekToDo, sessionDoneBetween, ACTIVITIES, EFFORTS, metFor, estimateKcal, cleanWorkout, workoutName, bodyKg, defaultActiveGoal, sessionFor, moveSession, setIndex, sessionDoneIn, weekPlan,
     volUnitFor, mlToUnit, unitToMl, fmtVol, waterGoalMl, dayWaterMl, waterExpectedMl, WATER_WAKE_HOUR, WATER_SLEEP_HOUR,
     dayIndex, dayStreaks, weekStreaks, activitySummary, activityWeeks, activityMix, activityDigest,
   };

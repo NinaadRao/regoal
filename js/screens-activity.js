@@ -27,10 +27,10 @@
 
   // ---------- small views ----------
   function dayStrip(sum) {
-    const box = h('div', { class: 'dots', role: 'img', 'aria-label': 'The last 14 days. ' + sum.last14.filter((d) => d.active).length + ' active.' });
+    const box = h('div', { class: 'dots', role: 'img', 'aria-label': 'The last 14 days. ' + sum.last14.filter((d) => d.active).length + ' active' + (sum.last14.some((d) => d.frozen) ? ', ' + sum.last14.filter((d) => d.frozen).length + ' frozen' : '') + '.' });
     for (const d of sum.last14) {
       const isToday = d.date === sum.last14[13].date;
-      box.appendChild(h('div', { class: 'dcol' }, h('span', { class: 'dot' + (d.active ? ' on' : '') + (isToday ? ' now' : ''), title: dayLabel(d.date) + (d.active ? ': active' : '') }), h('small', null, U.DOW[E.weekdayOf(d.date)][0])));
+      box.appendChild(h('div', { class: 'dcol' }, h('span', { class: 'dot' + (d.active ? ' on' : d.frozen ? ' ice' : '') + (isToday ? ' now' : ''), title: dayLabel(d.date) + (d.active ? ': active' : d.frozen ? ': frozen' : '') }), h('small', null, U.DOW[E.weekdayOf(d.date)][0])));
     }
     return box;
   }
@@ -38,6 +38,7 @@
     return h('div', { class: 'stat' }, h('div', { class: 'display big2' }, String(value)), h('div', { class: 'statl' }, label), sub ? h('div', { class: 'muted small' }, sub) : null);
   }
   function streakLine(sum) {
+    if (sum.last14[13].frozen) return 'Today is frozen, so your streak is safe. Any session still adds to it.';
     if (sum.dayStreak >= 2) return sum.dayStreak + ' days in a row. Keep it going.';
     if (sum.weekStreak >= 1 && sum.thisWeek.days >= sum.goal) return 'You hit your goal this week.';
     if (sum.lastActive == null) return 'Log your first workout to start a streak.';
@@ -467,6 +468,31 @@
   }
   Screens.upcomingSheet = upcomingSheet;
 
+  // ---------- streak freeze ----------
+  // A freeze covers one day with no activity so a streak is not broken. Two a month; it can be taken back.
+  function freezeSheet() {
+    const st = Store.getState(), t = U.today(), fs = E.freezeStatus(st, t);
+    let close = () => {};
+    const pick = async (d) => { close(); await Store.append('streak_freeze', { date: d }, 'user'); U.toast(dayLabel(d) + ' is frozen. Your streak carries on.'); root.App.render(); };
+    const body = h('div', { class: 'stack' });
+    if (!fs.left) body.appendChild(h('div', { class: 'muted' }, 'You have used both freezes for this month. They come back on the 1st.'));
+    else if (!fs.canFreeze.length) body.appendChild(h('div', { class: 'muted' }, 'Nothing to freeze: every recent day is either active, already frozen, or its month has no freezes left.'));
+    else {
+      body.appendChild(h('div', { class: 'muted small' }, 'Pick a day you could not train. It counts as a bridge, so your day streak does not break, and it counts toward that week\'s active-day goal. ' + plural(fs.left, 'freeze') + ' left in ' + U.MON[E.parseISO(t).getMonth()] + '.'));
+      body.appendChild(h('div', { class: 'list' }, ...fs.canFreeze.map((d) => h('button', { type: 'button', class: 'listrow', onclick: () => pick(d) }, h('div', { class: 'grow' }, h('b', null, d === t ? 'Today' : dayLabel(d)), h('span', { class: 'muted small' }, d === t ? 'Use it if you are not going to train today' : 'Nothing logged')), U.icon('chev', 16)))));
+    }
+    close = U.sheet('Freeze a day', body, [{ label: 'Close' }]);
+  }
+  Screens.freezeSheet = freezeSheet;
+  function freezeCard(st, t) {
+    const fs = E.freezeStatus(st, t), mon = U.MON[E.parseISO(t).getMonth()];
+    return UI.card(h('div', { class: 'ct' }, 'Streak freeze'),
+      h('div', { class: 'kv' }, h('span', null, 'Left in ' + mon), h('b', null, fs.left + ' of ' + fs.max)),
+      h('div', { class: 'muted small' }, 'Life gets in the way. A freeze covers one day you could not train so your streak carries on. Up to ' + fs.max + ' a month; they come back on the 1st.'),
+      ...fs.usedDates.map((d) => h('div', { class: 'kv' }, h('span', null, dayLabel(d) + ' frozen'), h('button', { class: 'btn quiet small', type: 'button', 'aria-label': 'Take back the freeze on ' + dayLabel(d), onclick: () => { Store.voidEvent(st.freezes[d]).then(() => { U.toast('Freeze taken back.'); root.App.render(); }); } }, 'Take back'))),
+      UI.btn('Use a freeze', { kind: 'quiet', disabled: !fs.left || !fs.canFreeze.length, onClick: freezeSheet }));
+  }
+
   // ---------- the Activity screen ----------
   Screens.activity = function () {
     revokeThumbs();
@@ -480,9 +506,10 @@
       dayStrip(sum),
       h('div', { class: 'muted small' }, streakLine(sum)),
       UI.btn('Log a workout', { onClick: () => workoutSheet() })));
+    cards.push(freezeCard(st, t));
 
     cards.push(UI.card(h('div', { class: 'ct' }, 'This week'),
-      h('div', { class: 'kv' }, h('span', null, 'Active days'), h('b', null, sum.thisWeek.days + ' of ' + goal)),
+      h('div', { class: 'kv' }, h('span', null, 'Active days'), h('b', null, sum.thisWeek.days + ' of ' + goal + (sum.thisWeek.frozen ? ' + ' + sum.thisWeek.frozen + ' frozen' : ''))),
       h('div', { class: 'kv' }, h('span', null, 'Time moving'), h('b', null, sum.thisWeek.mins ? dur(sum.thisWeek.mins) : 'Nothing logged')),
       h('div', { class: 'kv' }, h('span', null, 'Active calories'), h('b', null, sum.thisWeek.kcal ? kc(sum.thisWeek.kcal) : '0')),
       ...E.weekPlan(st, cur, t).map((p) => {

@@ -469,3 +469,48 @@ test('profile edits: only known fields are kept, one bad field refuses the edit,
   const s2 = E.project(events.concat(ev('event_voided', { target: first.seq })));
   assert.equal(s2.profile.name, undefined);
 });
+
+// ---------- streak freeze ----------
+test('a streak freeze bridges one day without adding to the count, and counts toward the week goal', () => {
+  const { events } = base();
+  // active Mon 5, Tue 6, (Wed 7 frozen), Thu 8, Fri 9
+  for (const d of ['2026-01-05', '2026-01-06', '2026-01-08', '2026-01-09']) events.push(ev('workout_logged', workout(d)));
+  const without = E.activitySummary(E.project(events), '2026-01-09', 4);
+  assert.equal(without.dayStreak, 2, 'the gap breaks it');
+  const withFz = E.project(events.concat(ev('streak_freeze', { date: '2026-01-07' })));
+  const s = E.activitySummary(withFz, '2026-01-09', 4);
+  assert.equal(s.dayStreak, 4, 'four active days, the frozen one bridges but is not counted');
+  assert.equal(s.bestDayStreak, 4);
+  assert.equal(s.thisWeek.days, 4); assert.equal(s.thisWeek.frozen, 1);
+  assert.equal(s.last14.find((d) => d.date === '2026-01-07').frozen, true);
+  // 3 active days + 1 frozen reaches a goal of 4 for the week streak, which 3 alone does not
+  const e2 = base().events; for (const d of ['2026-01-05', '2026-01-06', '2026-01-08']) e2.push(ev('workout_logged', workout(d)));
+  assert.equal(E.activitySummary(E.project(e2), '2026-01-11', 4).weekStreak, 0);
+  assert.equal(E.activitySummary(E.project(e2.concat(ev('streak_freeze', { date: '2026-01-07' }))), '2026-01-11', 4).weekStreak, 1);
+  // a frozen today keeps yesterday's run alive
+  const e3 = base().events; for (const d of ['2026-01-05', '2026-01-06']) e3.push(ev('workout_logged', workout(d)));
+  assert.equal(E.activitySummary(E.project(e3), '2026-01-08', 4).dayStreak, 0, 'a missed day 07 and today 08: broken');
+  assert.equal(E.activitySummary(E.project(e3.concat(ev('streak_freeze', { date: '2026-01-07' }), ev('streak_freeze', { date: '2026-01-08' }))), '2026-01-08', 4).dayStreak, 2);
+});
+
+test('only two freezes a month, a later month starts again, bad dates are ignored, and taking one back frees it', () => {
+  const { events } = base();
+  const fr = (d) => ev('streak_freeze', { date: d });
+  const e = events.concat(fr('2026-01-07'), fr('2026-01-08'), fr('2026-01-09'), fr('2026-02-02'), fr('nope'), fr('2026-01-07'));
+  const s = E.project(e);
+  assert.deepEqual(Object.keys(s.freezes).sort(), ['2026-01-07', '2026-01-08', '2026-02-02'], 'two in January (the third and the repeat are ignored), one in February');
+  assert.equal(E.validateEvents(e, 100), null);
+  const fs = E.freezeStatus(s, '2026-01-09');
+  assert.equal(fs.left, 0); assert.equal(fs.used, 2); assert.deepEqual(fs.canFreeze, [], 'none left in January');
+  // take one back (void its event): the slot is free and the third counts
+  const seq7 = s.freezes['2026-01-07'];
+  const back = E.project(e.concat(ev('event_voided', { target: seq7 })));
+  assert.equal(back.freezes['2026-01-07'], undefined);
+  assert.ok(back.freezes['2026-01-09'], 'the next one in the log now fits');
+  // what can be frozen: recent days with nothing logged, not yet frozen, not before the plan started
+  const fresh = E.project(base().events.concat(ev('workout_logged', workout('2026-01-08')), fr('2026-01-07')));
+  const st = E.freezeStatus(fresh, '2026-01-09');
+  assert.equal(st.left, 1);
+  assert.deepEqual(st.canFreeze, ['2026-01-09', '2026-01-06', '2026-01-05'], 'today, and earlier days that are neither active nor frozen');
+  assert.equal(E.freezeStatus(fresh, '2026-01-09').canFreeze.includes('2026-01-04'), false, 'before the plan started');
+});
