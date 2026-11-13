@@ -293,8 +293,14 @@
     const angle = T.angle, cis = E.checkIns(st, angle), have = cis.filter((c) => c.photo);
     setSlots(st, set, cis);
     const head = UI.header('Compare', angle + ' · pick any two check-ins', { back: '#/photos/trend' });
+    // Which pose to compare: all five, each with how many photos it has. Shared with the trend screen.
+    const angleSel = (() => {
+      const sel = h('select', { class: 'inp', 'aria-label': 'Pose to compare', onchange: () => { T.angle = sel.value; T.week = null; T.reveal = false; root.App.render(); } },
+        ...E.ANGLES.map((a) => { const n = st.photos.filter((p) => p.angle === a).length; return h('option', { value: a, selected: a === angle }, a + ' (' + n + (n === 1 ? ' photo)' : ' photos)')); }));
+      return h('label', { class: 'field' }, h('span', { class: 'lab' }, 'Pose'), h('span', { class: 'selbox' }, sel));
+    })();
     if (have.length < 2) {
-      return UI.page(head, UI.scroller(UI.card(h('div', { class: 'muted' }, 'Add ' + angle + ' photos at two check-ins to compare them.'), UI.btn('Open photo check-in', { href: '#/photos', kind: 'quiet' }))));
+      return UI.page(head, UI.scroller(angleSel, UI.card(h('div', { class: 'muted' }, 'Add ' + angle + ' photos at two check-ins to compare them.'), UI.btn('Open photo check-in', { href: '#/photos', kind: 'quiet' }))));
     }
     if (CMP.angle !== angle || !have.find((c) => c.week === CMP.a) || !have.find((c) => c.week === CMP.b)) { CMP.angle = angle; CMP.a = have[0].week; CMP.b = have[have.length - 1].week; CMP.reveal = false; }
     const byWeek = (w) => have.find((c) => c.week === w);
@@ -450,7 +456,7 @@
     redraw();
     loadUrls(have, urlByWeek, myGen).then((ok) => { if (ok) { loaded = true; redraw(); } });
 
-    return UI.page(head, UI.scroller(h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), stageBox, zoomCtl, alignCtl, help, tableBox,
+    return UI.page(head, UI.scroller(angleSel, h('div', { class: 'row' }, selectFor('a', 'Before'), selectFor('b', 'After')), stageBox, zoomCtl, alignCtl, help, tableBox,
       h('div', { class: 'muted small' }, 'Photos stay on this device.' + (blurOn ? ' Blur is on until you reveal them.' : ''))), foot);
   };
 

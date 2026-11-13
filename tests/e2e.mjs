@@ -1886,6 +1886,17 @@ async function main() {
     ok(rows.length === 3 && /Weight/.test(rows[0]) && /82\.0 kg/.test(rows[0]) && /80\.2 kg/.test(rows[0]) && /-1\.8 kg/.test(rows[0]), 'weight row: ' + rows[0]);
     ok(/Waist/.test(rows[1]) && /-1\.8 cm/.test(rows[1]), 'waist row: ' + rows[1]);
     ok(/Chest/.test(rows[2]) && /\+1\.2 cm/.test(rows[2]), 'chest row: ' + rows[2]);
+    const pose = tpage.getByLabel('Pose to compare');
+    eq(await pose.locator('option').count(), 5, 'the Pose dropdown offers all five poses');
+    ok(/Front \(\d+ photos?\)/.test(await pose.locator('option').first().innerText()), 'each pose shows how many photos it has');
+    const emptyPose = await tpage.evaluate(() => Engine.ANGLES.find((a) => Store.getState().photos.filter((p) => p.angle === a).length < 2));
+    if (emptyPose) {
+      await pose.selectOption(emptyPose);
+      await tpage.getByText('Add ' + emptyPose + ' photos at two check-ins to compare them.').waitFor();
+      ok(await tpage.getByLabel('Pose to compare').count() === 1, 'the dropdown stays so another pose can be picked');
+      await tpage.getByLabel('Pose to compare').selectOption('Front');
+      await tpage.waitForSelector('.cmp-side');
+    }
     await tpage.getByLabel('After', { exact: true }).selectOption('5'); await tpage.getByLabel('Before', { exact: true }).selectOption('5');
     ok(await tpage.getByRole('button', { name: 'Download image' }).isDisabled(), 'the same check-in twice cannot be downloaded');
     await tpage.getByLabel('Before', { exact: true }).selectOption('1'); await tpage.getByLabel('After', { exact: true }).selectOption('9');
