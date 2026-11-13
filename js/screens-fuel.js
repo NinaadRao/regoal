@@ -132,10 +132,21 @@
     const remaining = plan.kcal - tot.kcal;
     const activeToday = st.workouts.filter((w) => w.date === date).reduce((n, w) => n + w.kcal, 0);
     const macroBar = (label, val, target, kind) => h('div', { class: 'stack' }, h('div', { class: 'kv' }, h('span', null, label), h('b', null, Math.round(val) + ' / ' + target + ' g')), U.bar(target ? (val / target) * 100 : 0, kind));
+    // a table of every meal logged today: calories and protein, carbs and fat for each, right under the day's totals
+    const dayFoods = st.foods.filter((f) => f.date === date), mealRows = [];
+    for (const meal of E.MEALS) {
+      const it = dayFoods.filter((f) => (E.MEALS.includes(f.meal) ? f.meal : 'Snack') === meal);
+      if (!it.length) continue;
+      const m = it.reduce((a, f) => ({ kcal: a.kcal + (f.kcal || 0), p: a.p + (f.protein || 0), c: a.c + (f.carbs || 0), f: a.f + (f.fat || 0) }), { kcal: 0, p: 0, c: 0, f: 0 });
+      mealRows.push(h('div', { class: 'mealrow', role: 'row' }, h('span', { class: 'mn' }, meal), h('span', null, U.withCommas(m.kcal)), h('span', null, U.num(m.p, 0)), h('span', null, U.num(m.c, 0)), h('span', null, U.num(m.f, 0))));
+    }
+    const byMeal = mealRows.length ? h('div', { class: 'bymeal', role: 'table', 'aria-label': 'Meal breakdown' },
+      h('div', { class: 'mealrow head', role: 'row' }, h('span', { class: 'mn' }, 'By meal'), h('span', null, 'kcal'), h('span', null, 'P (g)'), h('span', null, 'C (g)'), h('span', null, 'F (g)')), ...mealRows) : null;
     const summary = UI.card(
       h('div', { class: 'target-top' }, h('div', null, h('div', { class: 'display big' }, U.withCommas(tot.kcal), h('span', { class: 'muted unitbig' }, ' / ' + U.withCommas(plan.kcal) + ' kcal')), h('div', { class: 'muted small' }, remaining >= 0 ? U.withCommas(remaining) + ' left' : U.withCommas(-remaining) + ' over')), U.chip(E.dayTotals(st, date).n + ' logged', 'line')),
       U.bar(plan.kcal ? (tot.kcal / plan.kcal) * 100 : 0, tot.kcal > plan.kcal * 1.1 ? 'coral' : '', true),
       macroBar('Protein', tot.protein, plan.protein, 'coral'), macroBar('Carbs', tot.carbs, plan.carbs, ''), macroBar('Fat', tot.fat, plan.fat, 'cool'),
+      byMeal,
       activeToday ? h('a', { class: 'kv', href: '#/activity' }, h('span', null, 'Active today'), h('b', null, '~' + U.withCommas(activeToday) + ' kcal')) : null,
       activeToday ? h('div', { class: 'muted small' }, 'Your target already allows for training, so there is no need to eat this back.') : null);
 
@@ -157,8 +168,8 @@
     }
     const hint = !root.App.aiReady() ? h('div', { class: 'muted small' }, 'Tip: add your own AI key in Coach settings and you can just describe a meal or list raw ingredients. You will always see the numbers before anything is saved.') : null;
     return UI.page(UI.header('Fuel', 'Log what you ate. Approximate is fine, consistent is better.'),
-      UI.scroller(nav, summary, UI.btn('Add food', { icon: 'plus', onClick: () => openAdd(date) }), date === t ? Screens.eatNextCard() : null,
-        ...(sections.length ? sections : [UI.empty(date === t ? 'Nothing logged yet today.' : 'Nothing logged this day.')]), date === t ? Screens.surpriseCard() : null, hint));
+      UI.scroller(nav, summary, UI.btn('Add food', { icon: 'plus', onClick: () => openAdd(date) }),
+        ...(sections.length ? sections : [UI.empty(date === t ? 'Nothing logged yet today.' : 'Nothing logged this day.')]), date === t ? Screens.eatNextCard() : null, date === t ? Screens.surpriseCard() : null, hint));
   };
 
   // ---------- edit an existing entry ----------

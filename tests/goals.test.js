@@ -295,6 +295,32 @@ test('the strength goal is the plan: hit rate decides the status and the plan le
   assert.equal(G.strengthProgress(world([]), '2026-08-01').status, 'ended');
 });
 
+test('the strength goal judges this week only by the lifts trained so far, never by the ones still to come', () => {
+  const plan0 = world([]).plan, ids = Object.keys(plan0.lifts);
+  const hit = (id, w, date) => { const tg = E.liftTarget(plan0.lifts[id], w, E.targetOpts(plan0)); return Array.from({ length: tg.sets }, () => ev('set_logged', { date, week: w, lift: id, kg: tg.kg || 0, reps: tg.reps })); };
+  const dayOf = (w, i) => E.addDays(plan0.startDate, (w - 1) * 7 + i);
+  // weeks 4 and 5 fully on target, weeks 2 and 3 empty: 4 hits of 8 lift-weeks, behind
+  const past = [];
+  for (const w of [4, 5]) for (const id of ids) past.push(...hit(id, w, dayOf(w, 1)));
+  const today = dayOf(6, 2); // Wednesday of week 6
+  const noneYet = G.strengthProgress(world(past), today);
+  assert.equal(noneYet.status, 'behind'); assert.equal(noneYet.trainedNow, 0); assert.equal(noneYet.hitNow, 0);
+  // Monday's work is on target. The lifts not trained yet this week are not held against the week.
+  const mon = world(past.concat(hit(ids[0], 6, dayOf(6, 0))));
+  const a = G.strengthProgress(mon, today);
+  assert.equal(a.trainedNow, 1); assert.equal(a.hitNow, 1);
+  assert.ok(a.rate > noneYet.rate, 'the hit this week counts for the goal');
+  // Both on target by Wednesday: 6 of 10 is enough for on track, where 4 of 8 was behind
+  const both = G.strengthProgress(world(past.concat(...ids.map((id) => hit(id, 6, dayOf(6, 0))))), today);
+  assert.equal(both.trainedNow, ids.length); assert.equal(both.status, 'on');
+  // A lift trained earlier in the week that fell short is a miss; one still being worked today is not
+  const short = (date) => ev('set_logged', { date, week: 6, lift: ids[0], kg: 5, reps: 1 });
+  const missed = G.strengthProgress(world(past.concat(short(dayOf(6, 0)))), today);
+  assert.equal(missed.trainedNow, 1); assert.equal(missed.hitNow, 0); assert.ok(missed.rate < noneYet.rate);
+  const working = G.strengthProgress(world(past.concat(short(today))), today);
+  assert.equal(working.rate, noneYet.rate, 'still in progress today: not a miss yet');
+});
+
 test('the overview lists the plan first, active goals next and closed goals last', () => {
   const st = world([setGoal({ id: 'g_aaa001', status: 'closed', closedOn: '2026-02-01' }), setGoal({ id: 'g_bbb002', title: 'Swim', sport: 'swimming', target: 1.5, from: 0.5 })]);
   const list = G.overview(st, '2026-02-10');

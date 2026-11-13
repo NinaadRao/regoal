@@ -481,12 +481,12 @@
       h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Previous week', disabled: w <= 1, onclick: () => { viewWeek = w - 1; root.App.render(); } }, U.icon('back', 20)),
       h('div', { class: 'grow', style: { textAlign: 'center' } }, h('div', { class: 'd' }, 'Week ' + w), h('div', { class: 'muted small' }, U.shortDate(E.weekRange(plan.startDate, w)[0]) + ' to ' + U.shortDate(E.weekRange(plan.startDate, w)[1]) + (w === cur ? ' · this week' : ''))),
       h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Next week', disabled: w >= E.planWeeks(plan), onclick: () => { viewWeek = w + 1; root.App.render(); } }, U.icon('chev', 20)));
-    const hit = Object.values(plan.lifts).filter((l) => E.liftStatus(state, l.id, cur, t).status === 'Hit').length;
+    const sts = Object.values(plan.lifts).map((l) => E.liftStatus(state, l.id, cur, t)), hit = sts.filter((x) => x.status === 'Hit').length, trained = sts.filter((x) => x.logged).length;
     return [
       nav,
       w !== cur ? h('button', { class: 'linkbtn', type: 'button', onclick: () => { viewWeek = null; root.App.render(); } }, 'Jump to this week') : null,
       UI.card(...(rows.length ? rows : [UI.empty('No tracked lifts yet. Add one below.')])),
-      h('div', { class: 'muted small' }, hit + ' of ' + rows.length + ' lifts hit this week' + (plan.deloadWeeks.includes(w) ? '. Week ' + w + ' is a deload: 2 sets at last block\'s weight.' : '.')),
+      h('div', { class: 'muted small' }, (trained ? hit + ' of ' + trained + ' lifts trained so far this week are on target' : 'Nothing trained yet this week') + (plan.deloadWeeks.includes(w) ? '. Week ' + w + ' is a deload: 2 sets at last block\'s weight.' : '.')),
       UI.btn('Add a lift', { kind: 'quiet', icon: 'plus', onClick: addLiftSheet })];
   };
   Screens.lifts = function () { return Screens.goals('plan'); };

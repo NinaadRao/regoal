@@ -316,6 +316,8 @@ async function main() {
     const f = (await events(page)).filter((e) => e.type === 'food_logged').pop().data;
     eq([f.kcal, f.source], [410, 'manual']);
     const mm = (await page.locator('.mealmacros').first().innerText()).replace(/\s+/g, ' ');
+    const bm = (await page.locator('.bymeal').innerText()).replace(/\s+/g, ' ');
+    ok(/By meal/.test(bm) && /\b20\b/.test(bm) && /\b60\b/.test(bm) && /\b10\b/.test(bm), 'the top card has a By meal table with each meal\'s kcal and macros: ' + bm);
     ok(/20 g protein/.test(mm) && /60 g carbs/.test(mm) && /10 g fat/.test(mm), 'each meal section shows its own protein, carbs and fat: ' + mm);
     // mismatch: 900 kcal with tiny macros
     await page.getByRole('button', { name: 'Add food' }).click();

@@ -212,7 +212,7 @@
     const unit = unitNow(), g = p.kind === 'strength' ? null : state.goals[p.id];
     const sub = g ? G.describe(g, unit) : p.sub;
     const foot = p.closed ? 'Closed' : p.over ? 'Ended ' + U.shortDate(p.endDate) : p.notStarted ? 'Starts ' + U.shortDate(g ? g.start : state.plan.startDate) : 'Week ' + p.cw + ' of ' + p.weeks + ' · ' + G.lengthText(p.weeks) + ' · ends ' + U.shortDate(p.endDate);
-    const wl = g && g.kind === 'endurance' && !p.over && !p.closed && !p.notStarted ? weekLine(g, p) : p.kind === 'strength' && !p.over && p.lifts ? p.hitNow + ' of ' + p.lifts + ' lifts hit this week' : '';
+    const wl = g && g.kind === 'endurance' && !p.over && !p.closed && !p.notStarted ? weekLine(g, p) : p.kind === 'strength' && !p.over && p.lifts ? (p.trainedNow ? p.hitNow + ' of ' + p.trainedNow + ' lifts trained this week are on target' : 'Nothing trained yet this week') : '';
     return h('a', { class: 'gcard', href: '#/goals/' + p.id },
       h('div', { class: 'row space' }, h('b', { class: 'gt' }, p.title), chipFor(p)),
       h('div', { class: 'muted small' }, sub),

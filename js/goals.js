@@ -240,12 +240,23 @@
     let hits = 0, total = 0;
     const last = over ? N : cw - 1;
     for (let w = Math.max(1, last - 3); w <= last; w++) for (const id of ids) { const st = E.liftStatus(state, id, w, today); if (st.logged || st.status === 'Behind') { total++; if (st.status === 'Hit') hits++; } }
+    // This week counts only what has been trained so far: a lift on target is a hit; a lift trained earlier in the week that
+    // fell short is a miss; a lift not trained yet, or one still being worked today, says nothing yet.
+    let hitNow = 0, trainedNow = 0;
+    if (!over && !notStarted) {
+      for (const id of ids) {
+        const st = E.liftStatus(state, id, cw, today);
+        if (!st.logged) continue;
+        trainedNow++;
+        if (st.status === 'Hit') { hitNow++; total++; hits++; continue; }
+        const lastDay = E.setsForWeek(state, cw).filter((x) => x.lift === id).reduce((m, x) => (x.date > m ? x.date : m), '');
+        if (lastDay < today) total++;
+      }
+    }
     const rate = total ? hits / total : null;
-    let hitNow = 0;
-    if (!over && !notStarted) for (const id of ids) if (E.liftStatus(state, id, cw, today).status === 'Hit') hitNow++;
     const status = over ? 'ended' : notStarted ? 'notstarted' : rate == null ? (cw >= 3 && ids.length ? 'behind' : 'nodata') : rate >= 0.85 ? 'ahead' : rate >= 0.6 ? 'on' : 'behind';
     const timePct = clamp((dayNo + 1) / (N * 7), 0, 1);
-    return { id: 'plan', kind: 'strength', title: 'Strength and muscle', sub: PLAN_GOALS[plan.goal] || 'Train', week, weeks: N, cw, over, notStarted, timePct, pct: timePct, status, label: LABEL[status], rate, hitNow, lifts: ids.length, daysLeft: Math.max(0, N * 7 - dayNo - 1), endDate: E.addDays(plan.startDate, N * 7 - 1), reached: false };
+    return { id: 'plan', kind: 'strength', title: 'Strength and muscle', sub: PLAN_GOALS[plan.goal] || 'Train', week, weeks: N, cw, over, notStarted, timePct, pct: timePct, status, label: LABEL[status], rate, hitNow, trainedNow, lifts: ids.length, daysLeft: Math.max(0, N * 7 - dayNo - 1), endDate: E.addDays(plan.startDate, N * 7 - 1), reached: false };
   }
 
   // The plan and every goal, active ones first.
@@ -311,7 +322,7 @@
   function digest(state, today, unit) {
     const rows = [];
     for (const p of overview(state, today)) {
-      if (p.kind === 'strength') { rows.push({ goal: p.title + ' (' + p.sub + ')', week: p.week + ' of ' + p.weeks, status: p.label, liftsHitThisWeek: p.hitNow + ' of ' + p.lifts }); continue; }
+      if (p.kind === 'strength') { rows.push({ goal: p.title + ' (' + p.sub + ')', week: p.week + ' of ' + p.weeks, status: p.label, liftsHitThisWeek: p.hitNow + ' of ' + p.trainedNow + ' trained so far (' + p.lifts + ' in the plan)' }); continue; }
       const g = state.goals[p.id];
       rows.push({ goal: g.title, aim: describe(g, unit), week: p.over ? 'over' : p.week + ' of ' + p.weeks, status: p.label, done: Math.round(p.pct * 100) + '%', now: valueText(g, p.actual, unit), thisWeek: p.thisWeek ? valueText(g, p.thisWeek.target, unit) : null });
     }
