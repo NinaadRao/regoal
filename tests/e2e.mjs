@@ -1833,10 +1833,11 @@ async function main() {
     await route(tpage, '#/photos/trend');
     await tpage.locator('.chart').first().waitFor();
     ok(await tpage.locator('.chart circle').count() >= 3, 'a dot per check-in');
-    await tpage.getByRole('button', { name: 'Side', exact: true }).click();
+    eq(await tpage.getByLabel('Pose', { exact: true }).locator('option').count(), 5, 'the Pose dropdown on Trend offers all five poses');
+    await tpage.getByLabel('Pose', { exact: true }).selectOption('Side');
     await tpage.getByText('You have no Side photos yet').waitFor();
     ok(await tpage.getByRole('button', { name: 'Download time-lapse' }).count() === 0, 'nothing to download yet');
-    await tpage.getByRole('button', { name: 'Front', exact: true }).click();
+    await tpage.getByLabel('Pose', { exact: true }).selectOption('Front');
     await tpage.waitForSelector('.stage');
   });
 

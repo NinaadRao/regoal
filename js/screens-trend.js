@@ -100,10 +100,11 @@
       on ? h('button', { type: 'button', class: 'chip line', 'aria-label': 'Zoom in', onclick: () => zoom(1.15) }, '+') : null,
       on ? h('div', { class: 'muted small' }, 'Drag the photo to line it up. Scroll/pinch or use +/− to zoom.') : null);
   }
-  function anglePills(onPick) {
-    const box = UI.pills({ items: E.ANGLES, values: new Set([T.angle]), multi: false, onChange: (v) => onPick(Array.from(v)[0]) });
-    box.classList.add('hscroll');
-    return box;
+  // Which pose to look at: a dropdown of all five, each with how many photos it has. Shared by Trend and Compare.
+  function anglePicker(st, current, onPick, label) {
+    const sel = h('select', { class: 'inp', 'aria-label': label || 'Pose', onchange: () => onPick(sel.value) },
+      ...E.ANGLES.map((a) => { const n = st.photos.filter((p) => p.angle === a).length; return h('option', { value: a, selected: a === current }, a + ' (' + n + (n === 1 ? ' photo)' : ' photos)')); }));
+    return h('label', { class: 'field' }, h('span', { class: 'lab' }, 'Pose'), h('span', { class: 'selbox' }, sel));
   }
 
   // The number a stat card shows for a check-in, in the person's units.
@@ -144,7 +145,7 @@
     const curWeek = E.clamp(E.weekOf(st.plan.startDate, U.today()), 1, E.planWeeks(st.plan));
     const cis = E.checkIns(st, angle, curWeek), have = cis.filter((c) => c.photo), n = cis.length;
     setSlots(st, set, cis);
-    const pills = anglePills((a) => { T.angle = a; T.week = null; T.reveal = false; root.App.render(); });
+    const pills = anglePicker(st, angle, (a) => { T.angle = a; T.week = null; T.reveal = false; root.App.render(); }, 'Pose');
     const back = { back: '#/photos' };
 
     if (!have.length) {
@@ -294,11 +295,7 @@
     setSlots(st, set, cis);
     const head = UI.header('Compare', angle + ' · pick any two check-ins', { back: '#/photos/trend' });
     // Which pose to compare: all five, each with how many photos it has. Shared with the trend screen.
-    const angleSel = (() => {
-      const sel = h('select', { class: 'inp', 'aria-label': 'Pose to compare', onchange: () => { T.angle = sel.value; T.week = null; T.reveal = false; root.App.render(); } },
-        ...E.ANGLES.map((a) => { const n = st.photos.filter((p) => p.angle === a).length; return h('option', { value: a, selected: a === angle }, a + ' (' + n + (n === 1 ? ' photo)' : ' photos)')); }));
-      return h('label', { class: 'field' }, h('span', { class: 'lab' }, 'Pose'), h('span', { class: 'selbox' }, sel));
-    })();
+    const angleSel = anglePicker(st, angle, (a) => { T.angle = a; T.week = null; T.reveal = false; root.App.render(); }, 'Pose to compare');
     if (have.length < 2) {
       return UI.page(head, UI.scroller(angleSel, UI.card(h('div', { class: 'muted' }, 'Add ' + angle + ' photos at two check-ins to compare them.'), UI.btn('Open photo check-in', { href: '#/photos', kind: 'quiet' }))));
     }
